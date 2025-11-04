@@ -1,0 +1,60 @@
+version: '0.2'
+ignorePaths: []
+dictionaryDefinitions: []
+dictionaries: []
+words:
+words:
+  - activedescendant
+  - aftertoggle
+  - Booleanish
+  - colcount
+  - colindex
+  - contentinfo
+  - describedby
+  - desync
+  - fixpoint
+  - flowto
+  - focusin
+  - focusout
+  - FOUC
+  - haspopup
+  - healthcheck
+  - hsba
+  - jsxs
+  - keybind
+  - keyshortcuts
+  - keyup
+  - labelledby
+  - menuitemcheckbox
+  - menuitemradio
+  - multiselectable
+  - outerclick
+  - pointerdown
+  - pointerenter
+  - pointerleave
+  - pointermove
+  - pointerup
+  - popovertarget
+  - posinset
+  - renderable
+  - roledescription
+  - roletype
+  - rowcount
+  - rowindex
+  - rowspan
+  - sectionhead
+  - setsize
+  - spinbutton
+  - treegrid
+  - treeitems
+  - unkeyed
+  - valuenow
+  - valuetext
+  - vdom
+  - visibilitychange
+  - vnode
+  - VNODE
+  - vnodes
+  - xlink
+ignoreWords: []
+import: []
