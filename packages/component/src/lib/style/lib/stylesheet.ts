@@ -1,3 +1,6 @@
+// .rmx-23ace { color: red; }
+// <ul>{item.map(() => <li css={{ color: 'red' }}>)}
+
 export function createStyleManager(layer: string = 'rmx') {
   let stylesheet = new CSSStyleSheet()
   document.adoptedStyleSheets.push(stylesheet)
@@ -47,15 +50,8 @@ export function createStyleManager(layer: string = 'rmx') {
     // Count reached zero, remove the rule
     let indexToDelete = entry.index
 
-    // Delete the rule
-    try {
-      stylesheet.deleteRule(indexToDelete)
-    } catch (error) {
-      // Rule might have been deleted externally or index invalid
-      // Clean up our tracking anyway
-      ruleMap.delete(className)
-      return
-    }
+    // TODO: just search and remove, stop re-indexing
+    stylesheet.deleteRule(indexToDelete)
 
     // Remove from tracking
     ruleMap.delete(className)
