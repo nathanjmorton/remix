@@ -1,14 +1,18 @@
-import { routes } from '../../routes.ts'
+import type { AssetsMap } from '@remix-run/fetch-router'
 
-import { CartButton } from '../assets/cart-button.tsx'
+import { routes } from '../../routes.ts'
+import { createCartButton } from '../assets/cart-button.tsx'
 import type { Book } from '../models/books.ts'
 
 export interface BookCardProps {
+  assets: AssetsMap
   book: Book
   inCart: boolean
 }
 
-export function BookCard({ book, inCart }: BookCardProps) {
+export function BookCard({ assets, book, inCart }: BookCardProps) {
+  let CartButton = createCartButton(assets)
+
   return (
     <div class="book-card">
       <img src={book.coverUrl} alt={book.title} />

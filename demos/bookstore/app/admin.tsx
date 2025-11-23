@@ -12,9 +12,9 @@ import { render } from './utils/render.ts'
 export default {
   middleware: [requireAuth(), requireAdmin()],
   handlers: {
-    index() {
+    index({ assets }) {
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <h1>Admin Dashboard</h1>
 
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">

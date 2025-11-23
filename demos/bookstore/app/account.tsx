@@ -13,11 +13,11 @@ import { RestfulForm } from './components/restful-form.tsx'
 export default {
   middleware: [requireAuth()],
   handlers: {
-    index() {
+    index({ assets }) {
       let user = getCurrentUser()
 
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <h1>My Account</h1>
 
           <div class="card">
@@ -62,11 +62,11 @@ export default {
     },
 
     settings: {
-      index() {
+      index({ assets }) {
         let user = getCurrentUser()
 
         return render(
-          <Layout>
+          <Layout assets={assets}>
             <h1>Account Settings</h1>
 
             <div class="card">
@@ -126,12 +126,12 @@ export default {
     },
 
     orders: {
-      index() {
+      index({ assets }) {
         let user = getCurrentUser()
         let orders = getOrdersByUserId(user.id)
 
         return render(
-          <Layout>
+          <Layout assets={assets}>
             <h1>My Orders</h1>
 
             <div class="card">
@@ -184,13 +184,13 @@ export default {
         )
       },
 
-      show({ params }) {
+      show({ params, assets }) {
         let user = getCurrentUser()
         let order = getOrderById(params.orderId)
 
         if (!order || order.userId !== user.id) {
           return render(
-            <Layout>
+            <Layout assets={assets}>
               <div class="card">
                 <h1>Order Not Found</h1>
                 <p>
@@ -205,7 +205,7 @@ export default {
         }
 
         return render(
-          <Layout>
+          <Layout assets={assets}>
             <h1>Order #{order.id}</h1>
 
             <div class="card">

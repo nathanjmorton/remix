@@ -1,9 +1,8 @@
 import * as path from 'node:path'
-import type { BuildOptions, BuildResult, OutputFile } from 'esbuild'
+import type { BuildContext, BuildOptions, BuildResult, OutputFile, Metafile } from 'esbuild'
 import * as esbuild from 'esbuild'
 import { lookup } from 'mrmime'
-import type { Middleware } from '@remix-run/fetch-router'
-import * as res from '@remix-run/fetch-router/response-helpers'
+import type { AssetsMap, Middleware } from '@remix-run/fetch-router'
 
 export interface AssetsOptions {
   /**
@@ -15,7 +14,6 @@ export interface AssetsOptions {
   publicPath?: string
   /**
    * When true, runs esbuild in watch mode and rebuilds assets on file changes.
-   * The file watcher is unref'd so it won't prevent the server from shutting down.
    */
   watch?: boolean
 }
@@ -29,28 +27,12 @@ export interface AssetsOptions {
  * @param config esbuild configuration object
  * @param options (optional) middleware options
  * @returns A middleware function
- *
- * @example
- * import { createRouter } from '@remix-run/fetch-router'
- * import { assets } from '@remix-run/assets-middleware'
- *
- * let router = createRouter({
- *   middleware: [
- *     assets({
- *       entryPoints: ['app/assets/app.tsx'],
- *       outdir: 'public/assets',
- *       bundle: true,
- *       minify: true,
- *       splitting: true,
- *       format: 'esm',
- *     }, {
- *       watch: true
- *     })
- *   ]
- * })
  */
-export function assets(config: BuildOptions, options?: AssetsOptions): Middleware {
-  let outdir = config.outdir ?? 'assets'
+export function assets(
+  config: BuildOptions & { outdir: string },
+  options?: AssetsOptions,
+): Middleware {
+  let outdir = config.outdir
   let absoluteOutdir = path.resolve(outdir)
   let watch = options?.watch ?? false
   let publicPath = options?.publicPath
@@ -65,14 +47,15 @@ export function assets(config: BuildOptions, options?: AssetsOptions): Middlewar
     }
   }
 
+  let context: BuildContext | null = null
   let buildPromise: Promise<BuildResult> | null = null
-  let outputFiles = new Map<string, OutputFile>()
-  let context: Awaited<ReturnType<typeof esbuild.context>> | null = null
+  let assetsMap: AssetsMap = new Map()
+  let outputFiles: Map<string, OutputFile> = new Map()
 
   async function runBuild(): Promise<BuildResult> {
-    // Force write: false to keep files in memory
     let buildConfig: BuildOptions = {
       ...config,
+      metafile: true,
       write: false,
     }
 
@@ -82,54 +65,121 @@ export function assets(config: BuildOptions, options?: AssetsOptions): Middlewar
         context = await esbuild.context({
           ...buildConfig,
           plugins: [
-            // Add a plugin to capture rebuild results
             ...(buildConfig.plugins || []),
             {
               name: 'assets-middleware-watcher',
               setup(build) {
                 build.onEnd((result) => {
-                  updateOutputFiles(result)
+                  updateBuild(result)
                 })
               },
             },
           ],
         })
+
         await context.watch()
       }
 
-      // Get the initial build result
       return await context.rebuild()
-    } else {
-      // In production mode, just build once
-      return await esbuild.build(buildConfig)
     }
+
+    return await esbuild.build(buildConfig)
   }
 
-  function updateOutputFiles(result: BuildResult) {
-    if (result.outputFiles) {
-      outputFiles.clear()
-      for (let file of result.outputFiles) {
-        outputFiles.set(file.path, file)
+  function updateBuild(result: BuildResult) {
+    buildAssetsMap(result.metafile!)
+    buildOutputFiles(result.outputFiles!)
+  }
+
+  function buildAssetsMap(metafile: Metafile) {
+    assetsMap.clear()
+
+    // Calculate the outbase: either the explicit one or the lowest common ancestor
+    let outbase: string
+    if (config.outbase) {
+      outbase = config.outbase
+    } else {
+      // Calculate the lowest common ancestor of all entry points
+      // This matches esbuild's behavior when outbase is not specified
+      let entryPoints = Object.values(metafile.outputs)
+        .filter((output) => output.entryPoint)
+        .map((output) => output.entryPoint!)
+
+      outbase = calculateLowestCommonAncestor(entryPoints)
+    }
+
+    for (let [outputPath, output] of Object.entries(metafile.outputs)) {
+      // Only include outputs that have an entryPoint (entry points only, no chunks)
+      if (!output.entryPoint) continue
+
+      // Calculate the relative path from the outbase
+      let entryPointRelative = path.relative(outbase, output.entryPoint)
+
+      // Calculate the output path relative to the outdir
+      let outputRelative = path.relative(absoluteOutdir, path.resolve(outputPath))
+
+      let href = publicPath + '/' + outputRelative.replace(/\\/g, '/')
+      let size = output.bytes
+      let type = lookup(outputPath) || 'application/octet-stream'
+
+      // Add mapping with source extension (e.g., 'entry.tsx')
+      let sourceName = entryPointRelative.replace(/\\/g, '/')
+      assetsMap.set(sourceName, { name: sourceName, href, size, type })
+
+      // Add mapping with output extension (e.g., 'entry.js')
+      let outputName = sourceName.replace(/\.[^.]+$/, path.extname(outputPath))
+      assetsMap.set(outputName, { name: sourceName, href, size, type })
+
+      // If there's a corresponding CSS file, add it with .css extension
+      if (output.cssBundle) {
+        let cssPath = outputPath.replace(/\.[^.]+$/, '.css')
+        let cssRelative = path.relative(absoluteOutdir, path.resolve(cssPath))
+        let cssHref = publicPath + '/' + cssRelative.replace(/\\/g, '/')
+        let cssName = sourceName.replace(/\.[^.]+$/, '.css')
+
+        // Find the CSS file in outputs to get its size
+        let cssOutput = metafile.outputs[cssPath]
+        let cssSize = cssOutput?.bytes ?? 0
+        let cssType = 'text/css'
+
+        assetsMap.set(cssName, {
+          name: sourceName,
+          href: cssHref,
+          size: cssSize,
+          type: cssType,
+        })
       }
     }
-    return result
   }
 
-  let middleware: Middleware = async ({ request, url }, next) => {
-    // Check if the request path starts with the publicPath
-    if (!url.pathname.startsWith(publicPath)) {
+  function buildOutputFiles(files: OutputFile[]) {
+    outputFiles.clear()
+
+    for (let file of files) {
+      outputFiles.set(file.path, file)
+    }
+  }
+
+  let middleware: Middleware = async (context, next) => {
+    // Trigger build on first request if not already building
+    if (!buildPromise) {
+      buildPromise = runBuild().then((result) => {
+        updateBuild(result)
+        return result
+      })
+    }
+
+    await buildPromise
+
+    // Attach the assets map to context for route handlers to use
+    context.assets = assetsMap
+
+    // If the request is not an asset request, send it downstream
+    if (!context.url.pathname.startsWith(publicPath)) {
       return next()
     }
 
-    // Trigger build on first request if not already building
-    if (!buildPromise) {
-      buildPromise = runBuild().then(updateOutputFiles)
-    }
-
-    // Wait for build to complete
-    await buildPromise
-
-    // Try to find a matching output file for this request
+    // Try to serve an asset file for this request
     let matchedFile: OutputFile | null = null
 
     for (let [filePath, file] of outputFiles) {
@@ -138,26 +188,25 @@ export function assets(config: BuildOptions, options?: AssetsOptions): Middlewar
       let relativePath = filePath.slice(absoluteOutdir.length)
       let urlPath = publicPath + relativePath
 
-      if (url.pathname === urlPath) {
+      if (context.url.pathname === urlPath) {
         matchedFile = file
         break
       }
     }
 
     if (matchedFile) {
-      // Convert the output file to a File object that res.file() can handle
-      let file = new File(
-        [matchedFile.contents as BlobPart],
-        matchedFile.path.split('/').pop() || 'file',
-        {
-          type: lookup(matchedFile.path) || 'application/octet-stream',
-          lastModified: Date.now(),
-        },
-      )
-
-      return res.file(file, request, {
-        cacheControl: watch ? 'no-cache' : 'public, max-age=31536000',
+      let headers = new Headers({
+        'Cache-Control': watch ? 'no-cache' : 'public, max-age=31536000',
+        'Content-Length': matchedFile.contents.length.toString(),
+        'Content-Type': lookup(matchedFile.path) ?? 'application/octet-stream',
+        ETag: `"${matchedFile.hash}"`,
       })
+
+      if (context.request.method === 'HEAD') {
+        return new Response(null, { headers })
+      }
+
+      return new Response(matchedFile.contents as BlobPart, { headers })
     }
   }
 
@@ -170,4 +219,29 @@ export function assets(config: BuildOptions, options?: AssetsOptions): Middlewar
   }
 
   return middleware
+}
+
+function calculateLowestCommonAncestor(paths: string[]): string {
+  if (paths.length === 0) return '.'
+  if (paths.length === 1) return path.dirname(paths[0])
+
+  // Normalize all paths and split into segments
+  let segments = paths.map((p) => path.normalize(p).split(path.sep))
+
+  // Find the common prefix of all paths
+  let commonSegments: string[] = []
+  let minLength = Math.min(...segments.map((s) => s.length))
+
+  for (let i = 0; i < minLength; i++) {
+    let segment = segments[0][i]
+    if (segments.every((s) => s[i] === segment)) {
+      commonSegments.push(segment)
+    } else {
+      break
+    }
+  }
+
+  // The LCA is the directory, not the file
+  // If we have common segments, join them; otherwise use '.'
+  return commonSegments.length > 0 ? commonSegments.join(path.sep) : '.'
 }

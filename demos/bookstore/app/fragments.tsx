@@ -11,7 +11,7 @@ import { getCurrentCart } from './utils/context.ts'
 export default {
   middleware: [loadAuth()],
   handlers: {
-    async bookCard({ params }) {
+    async bookCard({ params, assets }) {
       // Simulate network latency
       // await new Promise((resolve) => setTimeout(resolve, 1000 * Math.random()))
 
@@ -24,7 +24,7 @@ export default {
       let cart = getCurrentCart()
       let inCart = cart.items.some((item) => item.slug === params.slug)
 
-      return render(<BookCard book={book} inCart={inCart} />)
+      return render(<BookCard book={book} inCart={inCart} assets={assets} />)
     },
   },
 } satisfies RouteHandlers<typeof routes.fragments>

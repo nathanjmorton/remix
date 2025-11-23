@@ -1,6 +1,8 @@
 export { createStorageKey } from './lib/app-storage.ts'
 export { AppStorage } from './lib/app-storage.ts'
 
+export type { Asset, AssetsMap } from './lib/assets.ts'
+
 export {
   createFormAction,
   createFormAction as formAction, // shorthand

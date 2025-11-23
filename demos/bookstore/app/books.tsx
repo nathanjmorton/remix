@@ -7,17 +7,17 @@ import { getAllBooks, getBookBySlug, getBooksByGenre, getAvailableGenres } from 
 import { Layout } from './layout.tsx'
 import { loadAuth } from './middleware/auth.ts'
 import { render } from './utils/render.ts'
-import { ImageCarousel } from './assets/image-carousel.tsx'
+import { createImageCarousel } from './assets/image-carousel.tsx'
 
 export default {
   middleware: [loadAuth()],
   handlers: {
-    index() {
+    index({ assets }) {
       let books = getAllBooks()
       let genres = getAvailableGenres()
 
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <h1>Browse Books</h1>
 
           <div class="card" style="margin-bottom: 2rem;">
@@ -57,13 +57,13 @@ export default {
       )
     },
 
-    genre({ params }) {
+    genre({ params, assets }) {
       let genre = params.genre
       let books = getBooksByGenre(genre)
 
       if (books.length === 0) {
         return render(
-          <Layout>
+          <Layout assets={assets}>
             <div class="card">
               <h1>Genre Not Found</h1>
               <p>No books found in the "{genre}" genre.</p>
@@ -79,7 +79,7 @@ export default {
       }
 
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <h1>{genre.charAt(0).toUpperCase() + genre.slice(1)} Books</h1>
           <p style="margin: 1rem 0;">
             <a href={routes.books.index.href()} class="btn btn-secondary">
@@ -99,12 +99,12 @@ export default {
       )
     },
 
-    show({ params }) {
+    show({ params, assets }) {
       let book = getBookBySlug(params.slug)
 
       if (!book) {
         return render(
-          <Layout>
+          <Layout assets={assets}>
             <div class="card">
               <h1>Book Not Found</h1>
             </div>
@@ -113,8 +113,10 @@ export default {
         )
       }
 
+      let ImageCarousel = createImageCarousel(assets)
+
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <div style="display: grid; grid-template-columns: 300px 1fr; gap: 2rem;">
             <div
               css={{

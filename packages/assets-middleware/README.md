@@ -19,7 +19,7 @@ import { assets } from '@remix-run/assets-middleware'
 let router = createRouter({
   middleware: [
     assets({
-      entryPoints: ['app/assets/app.tsx'],
+      entryPoints: ['app/assets/**/*'],
       outdir: 'public/assets',
       bundle: true,
       minify: true,
@@ -30,7 +30,7 @@ let router = createRouter({
 })
 ```
 
-The middleware accepts an esbuild configuration object as the first argument. It will run the build once on the first request and serve the built files from memory.
+The middleware accepts an esbuild configuration object as the first argument. The `outdir` option is **required** and determines both the output file structure and the URL path for serving assets. The middleware runs the build once on the first request and serves the built files from memory (they are never written to disk).
 
 The built assets will be served from the URL path corresponding to the `outdir`. For example, with `outdir: 'public/assets'`, you can reference the built files in your HTML:
 
@@ -68,6 +68,70 @@ In watch mode, esbuild will rebuild the assets whenever source files change, and
 ```html
 <script type="module" src="/assets/app.js"></script>
 ```
+
+### Asset Manifest via Context
+
+The middleware populates `context.assets` with a Map that maps asset names to metadata about each asset. This allows you to reference assets by their source filenames, even when using content hashing for long-term caching.
+
+```ts
+import { createRouter } from '@remix-run/fetch-router'
+import { assets } from '@remix-run/assets-middleware'
+
+let router = createRouter({
+  middleware: [
+    assets({
+      entryPoints: ['app/assets/app.tsx', 'app/assets/admin.tsx'],
+      outbase: 'app/assets',
+      outdir: 'public/assets',
+      bundle: true,
+      format: 'esm',
+      entryNames: '[name]-[hash]', // Enable content hashing
+    }),
+  ],
+})
+
+router.get('/', (context) => {
+  // Access asset metadata from context
+  let appAsset = context.assets.get('app.tsx')
+  // => { name: 'app.tsx', href: '/assets/app-ABC123.js', type: 'text/javascript', size: 12345 }
+
+  return new Response(`
+    <html>
+      <head>
+        <script type="module" src="${appAsset.href}"></script>
+      </head>
+      <body>...</body>
+    </html>
+  `)
+})
+```
+
+#### Asset Info Structure
+
+Each asset in the map includes the following metadata:
+
+- `name`: The asset name (same as the map key)
+- `href`: The URL path to the asset
+- `type`: The MIME type (e.g., `'text/javascript'`, `'text/css'`)
+- `size`: The size of the asset in bytes
+
+#### Asset Name Resolution
+
+Assets can be referenced by both their source extension and output extension:
+
+```ts
+// Both work and return the same AssetInfo:
+context.assets.get('app.tsx') // => { name: 'app.tsx', href: '/assets/app-ABC123.js', ... }
+context.assets.get('app.js') // => { name: 'app.js', href: '/assets/app-ABC123.js', ... }
+```
+
+For CSS outputs generated from JavaScript/TypeScript entry points, use the `.css` extension:
+
+```ts
+context.assets.get('app.css') // => { name: 'app.css', href: '/assets/app-ABC123.css', type: 'text/css', ... }
+```
+
+The asset names are relative to the `outbase` directory. If `outbase` is `'app/assets'` and your entry point is `'app/assets/dashboard/admin.tsx'`, the asset name would be `'dashboard/admin.tsx'`.
 
 ## Related Packages
 

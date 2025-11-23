@@ -1,7 +1,6 @@
 import { route, formAction, resources } from '@remix-run/fetch-router'
 
 export let routes = route({
-  assets: '/assets/*path',
   uploads: '/uploads/*key',
 
   // Simple static routes

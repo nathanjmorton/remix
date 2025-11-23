@@ -17,14 +17,14 @@ export default {
   middleware: [loadAuth()],
   handlers: {
     login: {
-      index({ session, url }) {
+      index({ session, url, assets }) {
         let error = session.get('error')
         let formAction = routes.auth.login.action.href(undefined, {
           returnTo: url.searchParams.get('returnTo'),
         })
 
         return render(
-          <Document>
+          <Document assets={assets}>
             <div class="card" style="max-width: 500px; margin: 2rem auto;">
               <h1>Login</h1>
 
@@ -75,7 +75,7 @@ export default {
         )
       },
 
-      async action({ session, formData, url }) {
+      async action({ formData, url, session }) {
         let email = formData.get('email')?.toString() ?? ''
         let password = formData.get('password')?.toString() ?? ''
         let returnTo = url.searchParams.get('returnTo')
@@ -94,9 +94,9 @@ export default {
     },
 
     register: {
-      index() {
+      index({ assets }) {
         return render(
-          <Document>
+          <Document assets={assets}>
             <div class="card" style="max-width: 500px; margin: 2rem auto;">
               <h1>Register</h1>
               <form method="POST" action={routes.auth.register.action.href()}>
@@ -134,7 +134,7 @@ export default {
         )
       },
 
-      async action({ session, formData }) {
+      async action({ formData, session, assets }) {
         let name = formData.get('name')?.toString() ?? ''
         let email = formData.get('email')?.toString() ?? ''
         let password = formData.get('password')?.toString() ?? ''
@@ -142,7 +142,7 @@ export default {
         // Check if user already exists
         if (getUserByEmail(email)) {
           return render(
-            <Document>
+            <Document assets={assets}>
               <div class="card" style="max-width: 500px; margin: 2rem auto;">
                 <div class="alert alert-error">An account with this email already exists.</div>
                 <p>
@@ -177,9 +177,9 @@ export default {
     },
 
     forgotPassword: {
-      index() {
+      index({ assets }) {
         return render(
-          <Document>
+          <Document assets={assets}>
             <div class="card" style="max-width: 500px; margin: 2rem auto;">
               <h1>Forgot Password</h1>
               <p>Enter your email address and we'll send you a link to reset your password.</p>
@@ -203,12 +203,12 @@ export default {
         )
       },
 
-      async action({ formData }) {
+      async action({ formData, assets }) {
         let email = formData.get('email')?.toString() ?? ''
         let token = createPasswordResetToken(email)
 
         return render(
-          <Document>
+          <Document assets={assets}>
             <div class="card" style="max-width: 500px; margin: 2rem auto;">
               <div class="alert alert-success">Password reset link sent! Check your email.</div>
 
@@ -240,12 +240,12 @@ export default {
     },
 
     resetPassword: {
-      index({ params, session }) {
+      index({ params, session, assets }) {
         let token = params.token
         let error = session.get('error')
 
         return render(
-          <Document>
+          <Document assets={assets}>
             <div class="card" style="max-width: 500px; margin: 2rem auto;">
               <h1>Reset Password</h1>
               <p>Enter your new password below.</p>
@@ -288,7 +288,7 @@ export default {
         )
       },
 
-      async action({ session, formData, params }) {
+      async action({ formData, session, params, assets }) {
         let password = formData.get('password')?.toString() ?? ''
         let confirmPassword = formData.get('confirmPassword')?.toString() ?? ''
 
@@ -305,7 +305,7 @@ export default {
         }
 
         return render(
-          <Document>
+          <Document assets={assets}>
             <div class="card" style="max-width: 500px; margin: 2rem auto;">
               <div class="alert alert-success">
                 Password reset successfully! You can now login with your new password.

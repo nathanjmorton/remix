@@ -14,13 +14,13 @@ import { RestfulForm } from './components/restful-form.tsx'
 export default {
   middleware: [loadAuth()],
   handlers: {
-    index() {
+    index({ assets }) {
       let cart = getCurrentCart()
       let total = getCartTotal(cart)
       let user = getCurrentUserSafely()
 
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <h1>Shopping Cart</h1>
 
           <div class="card">

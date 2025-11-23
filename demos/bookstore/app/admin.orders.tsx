@@ -6,11 +6,11 @@ import { Layout } from './layout.tsx'
 import { render } from './utils/render.ts'
 
 export default {
-  index() {
+  index({ assets }) {
     let orders = getAllOrders()
 
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <h1>Manage Orders</h1>
 
         <p style="margin-bottom: 1rem;">
@@ -59,12 +59,12 @@ export default {
     )
   },
 
-  show({ params }) {
+  show({ params, assets }) {
     let order = getOrderById(params.orderId)
 
     if (!order) {
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <div class="card">
             <h1>Order Not Found</h1>
           </div>
@@ -74,7 +74,7 @@ export default {
     }
 
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <h1>Order #{order.id}</h1>
 
         <div class="card">

@@ -40,9 +40,6 @@
     "@types/node": "^24.6.0",
     "typescript": "^5.9.3"
   },
-  "peerDependencies": {
-    "@remix-run/fetch-router": "workspace:^"
-  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "git clean -fdX",

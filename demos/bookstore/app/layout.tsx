@@ -1,14 +1,17 @@
 import type { Remix } from '@remix-run/dom'
+import type { AssetsMap } from '@remix-run/fetch-router'
 
 import { routes } from '../routes.ts'
 import { getCurrentUserSafely } from './utils/context.ts'
 
 export function Document({
-  title = 'Bookstore',
+  assets,
   children,
+  title = 'Bookstore',
 }: {
-  title?: string
+  assets: AssetsMap
   children?: Remix.RemixNode
+  title?: string
 }) {
   return (
     <html lang="en">
@@ -16,7 +19,7 @@ export function Document({
         <meta charSet="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>{title}</title>
-        <script type="module" async src={routes.assets.href({ path: 'entry.js' })} />
+        <script type="module" async src={assets.get('entry.tsx')?.href} />
         <style
           innerHTML={`
           /* CSS Reset */
@@ -76,11 +79,11 @@ export function Document({
   )
 }
 
-export function Layout({ children }: { children?: Remix.RemixNode }) {
+export function Layout({ assets, children }: { assets: AssetsMap; children?: Remix.RemixNode }) {
   let user = getCurrentUserSafely()
 
   return (
-    <Document>
+    <Document assets={assets}>
       <header>
         <div class="container">
           <h1>

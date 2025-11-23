@@ -9,12 +9,12 @@ import { getCurrentUser } from './utils/context.ts'
 import { RestfulForm } from './components/restful-form.tsx'
 
 export default {
-  index() {
+  index({ assets }) {
     let user = getCurrentUser()
     let users = getAllUsers()
 
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <h1>Manage Users</h1>
 
         <p style="margin-bottom: 1rem;">
@@ -78,12 +78,12 @@ export default {
     )
   },
 
-  show({ params }) {
+  show({ params, assets }) {
     let targetUser = getUserById(params.userId)
 
     if (!targetUser) {
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <div class="card">
             <h1>User Not Found</h1>
           </div>
@@ -93,7 +93,7 @@ export default {
     }
 
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <h1>User Details</h1>
 
         <div class="card">
@@ -130,12 +130,12 @@ export default {
     )
   },
 
-  edit({ params }) {
+  edit({ params, assets }) {
     let targetUser = getUserById(params.userId)
 
     if (!targetUser) {
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <div class="card">
             <h1>User Not Found</h1>
           </div>
@@ -145,7 +145,7 @@ export default {
     }
 
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <h1>Edit User</h1>
 
         <div class="card">

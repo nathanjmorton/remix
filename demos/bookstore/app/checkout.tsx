@@ -12,13 +12,13 @@ import { getCurrentUser, getCurrentCart } from './utils/context.ts'
 export default {
   middleware: [requireAuth()],
   handlers: {
-    index() {
+    index({ assets }) {
       let cart = getCurrentCart()
       let total = getCartTotal(cart)
 
       if (cart.items.length === 0) {
         return render(
-          <Layout>
+          <Layout assets={assets}>
             <div class="card">
               <h1>Checkout</h1>
               <p>Your cart is empty. Add some books before checking out.</p>
@@ -33,7 +33,7 @@ export default {
       }
 
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <h1>Checkout</h1>
 
           <div class="card">
@@ -138,13 +138,13 @@ export default {
       return redirect(routes.checkout.confirmation.href({ orderId: order.id }))
     },
 
-    confirmation({ params }) {
+    confirmation({ params, assets }) {
       let user = getCurrentUser()
       let order = getOrderById(params.orderId)
 
       if (!order || order.userId !== user.id) {
         return render(
-          <Layout>
+          <Layout assets={assets}>
             <div class="card">
               <h1>Order Not Found</h1>
               <p>
@@ -159,7 +159,7 @@ export default {
       }
 
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <div class="alert alert-success">
             <h1 style="margin-bottom: 0.5rem;">Order Confirmed!</h1>
             <p>Thank you for your purchase. Your order has been placed successfully.</p>

@@ -2,6 +2,7 @@ import SuperHeaders from '@remix-run/headers'
 import { createSession, type Session } from '@remix-run/session'
 
 import { AppStorage } from './app-storage.ts'
+import type { AssetsMap } from './assets.ts'
 import {
   RequestBodyMethods,
   type RequestBodyMethod,
@@ -26,6 +27,12 @@ export class RequestContext<
   }
 
   /**
+   * Map of asset names to their output URLs. Populated by the assets middleware.
+   * Assets may be referenced by their source extension or output extension.
+   */
+  assets: AssetsMap = new Map()
+
+  /**
    * A map of files that were uploaded in the request.
    */
   get files(): Map<string, File> | null {
@@ -47,7 +54,7 @@ export class RequestContext<
 
   /**
    * Parsed [`FormData`](https://developer.mozilla.org/en-US/docs/Web/API/FormData) from the
-   * request body.
+   * request body. Populated by the form-data middleware.
    *
    * Note: This is only available for requests with a body (not `GET` or `HEAD`).
    *
@@ -73,9 +80,11 @@ export class RequestContext<
   headers: SuperHeaders
 
   /**
-   * The request method. This may differ from `request.method` if the request body contained a
-   * method override field (e.g. `_method=DELETE`), allowing HTML forms to simulate RESTful API
-   * request methods like `PUT` and `DELETE`.
+   * The request method.
+   *
+   * This may differ from `request.method` when using the method-override middleware and the
+   * request body contains a method override field (e.g. `_method=DELETE`), allowing HTML forms
+   * to simulate RESTful API request methods like `PUT` and `DELETE`.
    */
   method: RequestMethod
 
@@ -90,7 +99,7 @@ export class RequestContext<
   request: Request
 
   /**
-   * The current session.
+   * The current session. Populated by the session middleware.
    */
   get session(): Session {
     if (this.#session == null) {

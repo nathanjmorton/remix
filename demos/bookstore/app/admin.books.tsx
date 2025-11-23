@@ -8,11 +8,11 @@ import { render } from './utils/render.ts'
 import { RestfulForm } from './components/restful-form.tsx'
 
 export default {
-  index() {
+  index({ assets }) {
     let books = getAllBooks()
 
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <h1>Manage Books</h1>
 
         <p style="margin-bottom: 1rem;">
@@ -83,12 +83,12 @@ export default {
     )
   },
 
-  show({ params }) {
+  show({ params, assets }) {
     let book = getBookById(params.bookId)
 
     if (!book) {
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <div class="card">
             <h1>Book Not Found</h1>
           </div>
@@ -98,7 +98,7 @@ export default {
     }
 
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <h1>Book Details</h1>
 
         <div class="card">
@@ -150,9 +150,9 @@ export default {
     )
   },
 
-  new() {
+  new({ assets }) {
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <h1>Add New Book</h1>
 
         <div class="card">
@@ -249,12 +249,12 @@ export default {
     return redirect(routes.admin.books.index.href())
   },
 
-  edit({ params }) {
+  edit({ params, assets }) {
     let book = getBookById(params.bookId)
 
     if (!book) {
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <div class="card">
             <h1>Book Not Found</h1>
           </div>
@@ -264,7 +264,7 @@ export default {
     }
 
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <h1>Edit Book</h1>
 
         <div class="card">

@@ -10,9 +10,9 @@ import { render } from './utils/render.ts'
 
 export let home: BuildRouteHandler<'GET', typeof routes.home> = {
   middleware: [loadAuth()],
-  handler() {
+  handler({ assets }) {
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <div class="card">
           <h1>Welcome to the Bookstore</h1>
           <p style="margin: 1rem 0;">
@@ -39,9 +39,9 @@ export let home: BuildRouteHandler<'GET', typeof routes.home> = {
 
 export let about: BuildRouteHandler<'GET', typeof routes.about> = {
   middleware: [loadAuth()],
-  handler() {
+  handler({ assets }) {
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <div class="card">
           <h1>About Our Bookstore</h1>
           <p style="margin: 1rem 0;">
@@ -101,9 +101,9 @@ export let about: BuildRouteHandler<'GET', typeof routes.about> = {
 export let contact: RouteHandlers<typeof routes.contact> = {
   middleware: [loadAuth()],
   handlers: {
-    index() {
+    index({ assets }) {
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <div class="card">
             <h1>Contact Us</h1>
             <p style="margin: 1rem 0;">Have a question or feedback? We'd love to hear from you!</p>
@@ -133,9 +133,9 @@ export let contact: RouteHandlers<typeof routes.contact> = {
       )
     },
 
-    async action() {
+    async action({ assets }) {
       return render(
-        <Layout>
+        <Layout assets={assets}>
           <div class="alert alert-success">
             Thank you for your message! We'll get back to you soon.
           </div>
@@ -154,12 +154,12 @@ export let contact: RouteHandlers<typeof routes.contact> = {
 
 export let search: BuildRouteHandler<'GET', typeof routes.search> = {
   middleware: [loadAuth()],
-  handler({ url }) {
+  handler({ url, assets }) {
     let query = url.searchParams.get('q') ?? ''
     let books = query ? searchBooks(query) : []
 
     return render(
-      <Layout>
+      <Layout assets={assets}>
         <h1>Search Results</h1>
 
         <div class="card" style="margin-bottom: 2rem;">
