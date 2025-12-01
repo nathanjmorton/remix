@@ -1770,4 +1770,317 @@ describe('vnode rendering', () => {
     root.flush()
     expect(connectCalls).toBe(1)
   })
+
+  describe('keys', () => {
+    it('maintains component state when items are reordered', () => {
+      let container = document.createElement('div')
+      let root = createRoot(container)
+
+      // Component with internal counter state
+      function Counter(
+        this: Remix.Handle,
+        { id, initialCount }: { id: string; initialCount: number },
+      ) {
+        let count = initialCount
+        let updateCounter = () => {
+          count++
+          this.update()
+        }
+
+        return () => (
+          <div data-id={id}>
+            <span>
+              {id}: {count}
+            </span>
+            <button
+              on={{
+                click: updateCounter,
+              }}
+            >
+              +
+            </button>
+          </div>
+        )
+      }
+
+      // Render initial list: A, B, C
+      root.render(
+        <div>
+          <Counter key="a" id="a" initialCount={1} />
+          <Counter key="b" id="b" initialCount={2} />
+          <Counter key="c" id="c" initialCount={3} />
+        </div>,
+      )
+      root.flush()
+
+      expect(container.innerHTML).toContain('a: 1')
+      expect(container.innerHTML).toContain('b: 2')
+      expect(container.innerHTML).toContain('c: 3')
+
+      // Get references to buttons
+      let buttonA = container.querySelector('[data-id="a"] button')
+      let buttonB = container.querySelector('[data-id="b"] button')
+      let buttonC = container.querySelector('[data-id="c"] button')
+      invariant(buttonA instanceof HTMLButtonElement)
+      invariant(buttonB instanceof HTMLButtonElement)
+      invariant(buttonC instanceof HTMLButtonElement)
+
+      // Increment counters: A once, B twice, C once
+      buttonA.click()
+      root.flush()
+      buttonB.click()
+      root.flush()
+      buttonB.click()
+      root.flush()
+      buttonC.click()
+      root.flush()
+
+      expect(container.innerHTML).toContain('a: 2')
+      expect(container.innerHTML).toContain('b: 4')
+      expect(container.innerHTML).toContain('c: 4')
+
+      // Get DOM references before reorder
+      let divA = container.querySelector('[data-id="a"]')
+      let divB = container.querySelector('[data-id="b"]')
+      let divC = container.querySelector('[data-id="c"]')
+      invariant(divA instanceof HTMLDivElement)
+      invariant(divB instanceof HTMLDivElement)
+      invariant(divC instanceof HTMLDivElement)
+
+      // Verify initial DOM order: A, B, C
+      let parentDiv = container.querySelector('div')
+      invariant(parentDiv instanceof HTMLDivElement)
+      let children = Array.from(parentDiv.children)
+      expect(children[0]).toBe(divA)
+      expect(children[1]).toBe(divB)
+      expect(children[2]).toBe(divC)
+
+      // Reorder: C, A, B
+      root.render(
+        <div>
+          <Counter key="c" id="c" initialCount={3} />
+          <Counter key="a" id="a" initialCount={1} />
+          <Counter key="b" id="b" initialCount={2} />
+        </div>,
+      )
+      root.flush()
+
+      // State should be preserved: A=2, B=4, C=4
+      expect(container.innerHTML).toContain('a: 2')
+      expect(container.innerHTML).toContain('b: 4')
+      expect(container.innerHTML).toContain('c: 4')
+
+      // DOM nodes should be reused (same references)
+      let newDivA = container.querySelector('[data-id="a"]')
+      let newDivB = container.querySelector('[data-id="b"]')
+      let newDivC = container.querySelector('[data-id="c"]')
+      invariant(newDivA instanceof HTMLDivElement)
+      invariant(newDivB instanceof HTMLDivElement)
+      invariant(newDivC instanceof HTMLDivElement)
+
+      expect(newDivA).toBe(divA)
+      expect(newDivB).toBe(divB)
+      expect(newDivC).toBe(divC)
+
+      // Verify DOM order changed: C, A, B
+      let newChildren = Array.from(parentDiv.children)
+      expect(newChildren[0]).toBe(divC)
+      expect(newChildren[1]).toBe(divA)
+      expect(newChildren[2]).toBe(divB)
+
+      // Buttons should still work after reorder
+      let newButtonA = container.querySelector('[data-id="a"] button')
+      let newButtonB = container.querySelector('[data-id="b"] button')
+      invariant(newButtonA instanceof HTMLButtonElement)
+      invariant(newButtonB instanceof HTMLButtonElement)
+
+      newButtonA.click()
+      root.flush()
+      newButtonB.click()
+      root.flush()
+
+      expect(container.innerHTML).toContain('a: 3')
+      expect(container.innerHTML).toContain('b: 5')
+      expect(container.innerHTML).toContain('c: 4')
+    })
+
+    it('preserves input values and focus when items are reordered', () => {
+      let container = document.createElement('div')
+      document.body.appendChild(container)
+      let root = createRoot(container)
+
+      // Render initial list: A, B, C inputs
+      root.render(
+        <div>
+          {/* @ts-expect-error - key is handled by JSX runtime */}
+          <input key="a" data-id="a" defaultValue="initial-a" />
+          {/* @ts-expect-error - key is handled by JSX runtime */}
+          <input key="b" data-id="b" defaultValue="initial-b" />
+          {/* @ts-expect-error - key is handled by JSX runtime */}
+          <input key="c" data-id="c" defaultValue="initial-c" />
+        </div>,
+      )
+      root.flush()
+
+      // Get references to inputs
+      let inputA = container.querySelector('[data-id="a"]')
+      let inputB = container.querySelector('[data-id="b"]')
+      let inputC = container.querySelector('[data-id="c"]')
+      invariant(inputA instanceof HTMLInputElement)
+      invariant(inputB instanceof HTMLInputElement)
+      invariant(inputC instanceof HTMLInputElement)
+
+      // Type into inputs to set values
+      inputA.value = 'typed-a'
+      inputB.value = 'typed-b'
+      inputC.value = 'typed-c'
+
+      // Focus input B
+      inputB.focus()
+      expect(document.activeElement).toBe(inputB)
+
+      // Get DOM references before reorder
+      let div = container.querySelector('div')
+      invariant(div instanceof HTMLDivElement)
+      let children = Array.from(div.children)
+      expect(children[0]).toBe(inputA)
+      expect(children[1]).toBe(inputB)
+      expect(children[2]).toBe(inputC)
+
+      // Reorder: C, A, B
+      root.render(
+        <div>
+          {/* @ts-expect-error - key is handled by JSX runtime */}
+          <input key="c" data-id="c" defaultValue="initial-c" />
+          {/* @ts-expect-error - key is handled by JSX runtime */}
+          <input key="a" data-id="a" defaultValue="initial-a" />
+          {/* @ts-expect-error - key is handled by JSX runtime */}
+          <input key="b" data-id="b" defaultValue="initial-b" />
+        </div>,
+      )
+      root.flush()
+
+      // Verify input values are preserved
+      expect(inputA.value).toBe('typed-a')
+      expect(inputB.value).toBe('typed-b')
+      expect(inputC.value).toBe('typed-c')
+
+      // Verify DOM nodes are reused (same references)
+      let newInputA = container.querySelector('[data-id="a"]')
+      let newInputB = container.querySelector('[data-id="b"]')
+      let newInputC = container.querySelector('[data-id="c"]')
+      invariant(newInputA instanceof HTMLInputElement)
+      invariant(newInputB instanceof HTMLInputElement)
+      invariant(newInputC instanceof HTMLInputElement)
+
+      expect(newInputA).toBe(inputA)
+      expect(newInputB).toBe(inputB)
+      expect(newInputC).toBe(inputC)
+
+      // Verify DOM order changed: C, A, B
+      let newChildren = Array.from(div.children)
+      expect(newChildren[0]).toBe(inputC)
+      expect(newChildren[1]).toBe(inputA)
+      expect(newChildren[2]).toBe(inputB)
+
+      // Verify focus is preserved on input B
+      expect(document.activeElement).toBe(inputB)
+
+      // Verify cursor position is preserved (if we had set selection)
+      // Note: selection range might be lost, but the element should still be focused
+      if (document.activeElement === inputB) {
+        // Can still interact with the focused input
+        inputB.setSelectionRange(3, 3)
+        expect(inputB.selectionStart).toBe(3)
+      }
+
+      document.body.removeChild(container)
+    })
+
+    it('preserves nested input values when keyed items move to the end of the list', () => {
+      type Item = {
+        id: string
+        label: string
+      }
+
+      let container = document.createElement('div')
+      document.body.appendChild(container)
+      let root = createRoot(container)
+
+      let items: Item[] = [
+        { id: 'a', label: 'Item A' },
+        { id: 'b', label: 'Item B' },
+        { id: 'c', label: 'Item C' },
+      ]
+
+      function render() {
+        root.render(
+          <div>
+            {items.map((item) => (
+              // @ts-expect-error - key is handled by JSX runtime
+              <div key={item.id} data-id={item.id} className="list-item">
+                <input type="text" placeholder={item.label} defaultValue={item.label} />
+              </div>
+            ))}
+          </div>,
+        )
+        root.flush()
+      }
+
+      render()
+
+      // Find the input for item A and type into it
+      let itemADiv = container.querySelector('[data-id="a"]')
+      invariant(itemADiv instanceof HTMLDivElement)
+      let inputA = itemADiv.querySelector('input')
+      invariant(inputA instanceof HTMLInputElement)
+
+      inputA.value = 'typed-a'
+
+      // Move A down once (A, B, C -> B, A, C)
+      let moveDown = (id: string) => {
+        let index = items.findIndex((item) => item.id === id)
+        if (index === -1 || index === items.length - 1) return
+        let newItems = [...items]
+        ;[newItems[index], newItems[index + 1]] = [newItems[index + 1], newItems[index]]
+        items = newItems
+      }
+
+      moveDown('a')
+      render()
+
+      itemADiv = container.querySelector('[data-id="a"]')
+      invariant(itemADiv instanceof HTMLDivElement)
+      inputA = itemADiv.querySelector('input')
+      invariant(inputA instanceof HTMLInputElement)
+      expect(inputA.value).toBe('typed-a')
+
+      // Move A down again so it becomes the last item (B, A, C -> B, C, A)
+      moveDown('a')
+      render()
+
+      itemADiv = container.querySelector('[data-id="a"]')
+      invariant(itemADiv instanceof HTMLDivElement)
+      inputA = itemADiv.querySelector('input')
+      invariant(inputA instanceof HTMLInputElement)
+
+      // The bug: when the item becomes last, the value is reset to the default.
+      // This assertion documents the intended behavior (value should be preserved)
+      expect(inputA.value).toBe('typed-a')
+
+      document.body.removeChild(container)
+    })
+    it.todo('handles prepending items with keys')
+    it.todo('handles appending items with keys')
+    it.todo('handles removing items with keys')
+    it.todo('handles inserting items with keys')
+    it.todo('handles swapping adjacent items with keys')
+    it.todo('handles reversing list order with keys')
+    it.todo('handles complex reordering with keys')
+    it.todo('replaces nodes when keys match but type differs')
+    it.todo('handles mixed keyed and unkeyed children') // what does preact do?
+    it.todo('handles duplicate keys (last one wins)') // what does preact do? warn probably
+    it.todo('allows any type to be a key')
+    it.todo('handles keys in fragments')
+  })
 })

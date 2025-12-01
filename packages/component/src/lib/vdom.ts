@@ -23,6 +23,10 @@ const SVG_NS = 'http://www.w3.org/2000/svg'
 const XLINK_NS = 'http://www.w3.org/1999/xlink'
 const XML_NS = 'http://www.w3.org/XML/1998/namespace'
 
+// Internal diffing flags (modeled after Preact)
+const INSERT_VNODE = 1 << 0
+const MATCHED = 1 << 1
+
 // global so all roots share it
 let styleCache = new Map<string, { className: string; css: string }>()
 let styleManager =
@@ -51,6 +55,10 @@ export type VNode<T extends VNodeType = VNodeType> = {
   _events?: EventsContainer<EventTarget>
   _controller?: AbortController
   _svg?: boolean
+
+  // Internal diffing fields
+  _index?: number
+  _flags?: number
 
   // TEXT_NODE
   _text?: string
@@ -260,12 +268,13 @@ export function toVNode(node: Remix.Node): VNode {
   }
 
   if (node.type === Fragment) {
-    return { type: Fragment, _children: flatMapChildrenToVNodes(node) }
+    return { type: Fragment, key: node.key, _children: flatMapChildrenToVNodes(node) }
   }
 
   if (node.type === Catch) {
     return {
       type: Catch,
+      key: node.key,
       _fallback: node.props.fallback,
       _children: flatMapChildrenToVNodes(node),
     }
@@ -273,7 +282,7 @@ export function toVNode(node: Remix.Node): VNode {
 
   if (isRemixElement(node)) {
     let children = flatMapChildrenToVNodes(node)
-    return { type: node.type, props: node.props, _children: children }
+    return { type: node.type, key: node.key, props: node.props, _children: children }
   }
 
   invariant(false, 'Unexpected RemixNode')
@@ -870,7 +879,6 @@ function remove(node: VNode, domParent: ParentNode, scheduler: Scheduler) {
   }
 }
 
-// TODO: optimize later
 function diffChildren(
   curr: VNode[] | null,
   next: VNode[],
@@ -881,26 +889,200 @@ function diffChildren(
   cursor?: Node | null,
   anchor?: Node,
 ) {
+  // Initial mount / hydration: delegate to insert() for each child so that
+  // hydration cursors and creation logic remain centralized there.
   if (curr === null) {
     for (let node of next) {
       cursor = insert(node, domParent, frame, scheduler, vParent, anchor, cursor)
     }
+    vParent._children = next
     return cursor
   }
+
   let currLength = curr.length
   let nextLength = next.length
 
+  // Detect if any keys are present in the new children. If not, we can fall
+  // back to the simpler index-based diff which is cheaper and matches
+  // pre-existing behavior.
+  let hasKeys = false
   for (let i = 0; i < nextLength; i++) {
-    let currentNode = i < currLength ? curr[i] : null
-    diffVNodes(currentNode, next[i], domParent, frame, scheduler, vParent, anchor, cursor)
-  }
-
-  if (currLength > nextLength) {
-    for (let i = nextLength; i < currLength; i++) {
-      let node = curr[i]
-      if (node) remove(node, domParent, scheduler)
+    let node = next[i]
+    if (node && node.key != null) {
+      hasKeys = true
+      break
     }
   }
+
+  if (!hasKeys) {
+    for (let i = 0; i < nextLength; i++) {
+      let currentNode = i < currLength ? curr[i] : null
+      diffVNodes(currentNode, next[i], domParent, frame, scheduler, vParent, anchor, cursor)
+    }
+
+    if (currLength > nextLength) {
+      for (let i = nextLength; i < currLength; i++) {
+        let node = curr[i]
+        if (node) remove(node, domParent, scheduler)
+      }
+    }
+
+    vParent._children = next
+    return
+  }
+
+  // --- Preact-style keyed diff ------------------------------------------------
+
+  let oldChildren = curr
+  let oldChildrenLength = currLength
+  let remainingOldChildren = oldChildrenLength
+
+  // Reset flags on old children
+  for (let i = 0; i < oldChildrenLength; i++) {
+    let c = oldChildren[i]
+    if (c) c._flags = 0
+  }
+
+  let skew = 0
+  let newChildren: VNode[] = new Array(nextLength)
+
+  // First pass: match new children to old ones and mark which VNodes need to
+  // be inserted/moved. This mirrors Preact's constructNewChildrenArray, but
+  // our children are already normalized VNodes.
+  for (let i = 0; i < nextLength; i++) {
+    let childVNode = next[i]
+    if (!childVNode) {
+      newChildren[i] = childVNode
+      continue
+    }
+
+    newChildren[i] = childVNode
+    childVNode._parent = vParent
+
+    let skewedIndex = i + skew
+    let matchingIndex = -1
+
+    // Preact-style nearby search by key+type.
+    let key = childVNode.key
+    let type = childVNode.type
+    let searchVNode = oldChildren[skewedIndex]
+    let searchFlags = searchVNode?._flags ?? 0
+    let available = searchVNode != null && (searchFlags & MATCHED) === 0
+
+    let shouldSearch = remainingOldChildren > (available ? 1 : 0)
+
+    if (
+      (searchVNode == null && key == null) ||
+      (available && key === searchVNode.key && type === searchVNode.type)
+    ) {
+      matchingIndex = skewedIndex
+    } else if (shouldSearch) {
+      let x = skewedIndex - 1
+      let y = skewedIndex + 1
+      while (x >= 0 || y < oldChildrenLength) {
+        let idx = x >= 0 ? x-- : y++
+        searchVNode = oldChildren[idx]
+        let oldFlags = searchVNode?._flags ?? 0
+        if (
+          searchVNode != null &&
+          (oldFlags & MATCHED) === 0 &&
+          key === searchVNode.key &&
+          type === searchVNode.type
+        ) {
+          matchingIndex = idx
+          break
+        }
+      }
+    }
+
+    childVNode._index = matchingIndex
+
+    let matchedOldVNode: VNode | null = null
+    if (matchingIndex !== -1) {
+      matchedOldVNode = oldChildren[matchingIndex]
+      remainingOldChildren--
+      if (matchedOldVNode) {
+        matchedOldVNode._flags = (matchedOldVNode._flags ?? 0) | MATCHED
+      }
+    }
+
+    // Determine whether this is a mount vs move and mark INSERT_VNODE
+    let oldDom = matchedOldVNode && findFirstDomAnchor(matchedOldVNode)
+    let isMounting = !matchedOldVNode || !oldDom
+    if (isMounting) {
+      if (matchingIndex === -1) {
+        // Adjust skew similar to Preact when lengths differ
+        if (nextLength > oldChildrenLength) {
+          skew--
+        } else if (nextLength < oldChildrenLength) {
+          skew++
+        }
+      }
+
+      if (typeof childVNode.type !== 'function') {
+        childVNode._flags = (childVNode._flags ?? 0) | INSERT_VNODE
+      }
+    } else if (matchingIndex !== i + skew) {
+      if (matchingIndex === i + skew - 1) {
+        skew--
+      } else if (matchingIndex === i + skew + 1) {
+        skew++
+      } else {
+        if (matchingIndex! > i + skew) skew--
+        else skew++
+        childVNode._flags = (childVNode._flags ?? 0) | INSERT_VNODE
+      }
+    }
+  }
+
+  // Unmount any old children that weren't matched
+  if (remainingOldChildren) {
+    for (let i = 0; i < oldChildrenLength; i++) {
+      let oldVNode = oldChildren[i]
+      if (oldVNode && ((oldVNode._flags ?? 0) & MATCHED) === 0) {
+        remove(oldVNode, domParent, scheduler)
+      }
+    }
+  }
+
+  // Second pass: diff matched pairs and place/move DOM nodes in the correct
+  // order, similar to Preact's diffChildren + insert.
+  vParent._children = newChildren
+
+  let lastPlaced: Node | null = null
+
+  for (let i = 0; i < nextLength; i++) {
+    let childVNode = newChildren[i]
+    if (!childVNode) continue
+
+    let idx = childVNode._index ?? -1
+    let oldVNode = idx >= 0 ? oldChildren[idx] : null
+
+    diffVNodes(oldVNode, childVNode, domParent, frame, scheduler, vParent, anchor, cursor)
+
+    let shouldPlace = (childVNode._flags ?? 0) & INSERT_VNODE
+    let firstDom = findFirstDomAnchor(childVNode)
+    if (shouldPlace && firstDom && firstDom.parentNode === domParent) {
+      if (lastPlaced === null) {
+        if (firstDom !== domParent.firstChild) {
+          domParent.insertBefore(firstDom, domParent.firstChild)
+        }
+      } else {
+        let target: Node | null = lastPlaced.nextSibling
+        if (firstDom !== target) {
+          domParent.insertBefore(firstDom, target)
+        }
+      }
+    }
+
+    if (firstDom) lastPlaced = firstDom
+
+    // Clear internal flags for next diff
+    childVNode._flags = 0
+    childVNode._index = undefined
+  }
+
+  return
 }
 
 function commitText(node: TextNode, extras: { _dom: Text; _parent?: VNode }): CommittedTextNode {
