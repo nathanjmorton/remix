@@ -29,7 +29,7 @@ declare global {
     export interface Element {
       type: ElementType
       props: ElementProps
-      key?: string | undefined
+      key?: any
       $rmx: true
     }
 
@@ -49,6 +49,7 @@ declare global {
     export type Node = Renderable | Renderable[]
 
     export interface HostProps<eventTarget extends EventTarget> {
+      key?: any
       children?: Node
       on?: EventListeners<eventTarget> | undefined
       css?: CSSProps
