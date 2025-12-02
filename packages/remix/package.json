@@ -1,0 +1,58 @@
+{
+  "name": "remix",
+  "version": "0.0.0-stub.1",
+  "description": "Local Stub Package",
+  "author": "Michael Jackson <mjijackson@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/remix-run/remix.git",
+    "directory": "packages/remix"
+  },
+  "homepage": "https://github.com/remix-run/remix/tree/main/packages/remix#readme",
+  "files": [
+    "LICENSE",
+    "README.md",
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./cookie": "./src/cookie.ts",
+    "./session": "./src/session.ts",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./cookie": {
+        "types": "./dist/cookie.d.ts",
+        "default": "./dist/cookie.js"
+      },
+      "./session": {
+        "types": "./dist/session.d.ts",
+        "default": "./dist/session.js"
+      },
+      "./package.json": "./package.json"
+    }
+  },
+  "peerDependencies": {
+    "@remix-run/cookie": "workspace:^",
+    "@remix-run/fetch-router": "workspace:^",
+    "@remix-run/session": "workspace:^"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "git clean -fdX",
+    "prepublishOnly": "pnpm run build",
+    "test": "node --disable-warning=ExperimentalWarning --test './src/**/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  }
+}

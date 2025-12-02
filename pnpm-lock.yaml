@@ -766,6 +766,22 @@ importers:
         specifier: workspace:^
         version: link:../..
 
+  packages/remix:
+    dependencies:
+      '@remix-run/cookie':
+        specifier: workspace:^
+        version: link:../cookie
+      '@remix-run/fetch-router':
+        specifier: workspace:^
+        version: link:../fetch-router
+      '@remix-run/session':
+        specifier: workspace:^
+        version: link:../session
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
   packages/response:
     dependencies:
       '@remix-run/headers':
