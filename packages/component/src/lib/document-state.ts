@@ -126,5 +126,3 @@ export function createDocumentState(_doc?: Document) {
 
   return { capture, restore }
 }
-
-export let documentState = createDocumentState()

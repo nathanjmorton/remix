@@ -2,7 +2,7 @@ import { createContainer, type EventsContainer } from '@remix-run/interaction'
 import type { Component, ComponentHandle, FrameHandle } from './component.ts'
 import { createComponent, Catch, Fragment, Frame, createFrameHandle } from './component.ts'
 import { invariant } from './invariant.ts'
-import { documentState } from './document-state.ts'
+import { createDocumentState } from './document-state.ts'
 import { processStyle, createStyleManager, normalizeCssValue } from './style/index.ts'
 
 let fixmeIdCounter = 0
@@ -129,7 +129,8 @@ type EmptyFn = () => void
 
 export type Scheduler = ReturnType<typeof createScheduler>
 
-export function createScheduler() {
+export function createScheduler(doc: Document) {
+  let documentState = createDocumentState(doc)
   let scheduled = new Map<CommittedComponentNode, [ParentNode, Node | undefined]>()
   let tasks: EmptyFn[] = []
 
@@ -179,7 +180,7 @@ export function createScheduler() {
         }
       }
 
-      // restore after rendering, before user tasks so users can move focus/selection etc.
+      // restore before user tasks so users can move focus/selection etc.
       documentState.restore()
 
       if (tasks.length > 0) {
@@ -200,11 +201,12 @@ export function createRangeRoot(
 ): VirtualRoot {
   let root: VNode | null = null
   let frameStub = options.frame ?? createFrameHandle()
-  let scheduler = options.scheduler ?? createScheduler()
 
   let container = end.parentNode
   invariant(container, 'Expected parent node')
   invariant(end.parentNode === container, 'Boundaries must share parent')
+
+  let scheduler = options.scheduler ?? createScheduler(container.ownerDocument ?? document)
 
   let hydrationCursor = start.nextSibling
 
@@ -238,7 +240,7 @@ export function createRoot(
 ): Remix.VirtualRoot {
   let root: VNode | null = null
   let frameStub = options.frame ?? createFrameHandle()
-  let scheduler = options.scheduler ?? createScheduler()
+  let scheduler = options.scheduler ?? createScheduler(container.ownerDocument ?? document)
   let hydrationCursor = container.innerHTML.trim() !== '' ? container.firstChild : undefined
 
   return {
