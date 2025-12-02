@@ -2,6 +2,7 @@ import { createContainer, type EventsContainer } from '@remix-run/interaction'
 import type { Component, ComponentHandle, FrameHandle } from './component.ts'
 import { createComponent, Catch, Fragment, Frame, createFrameHandle } from './component.ts'
 import { invariant } from './invariant.ts'
+import { documentState } from './document-state.ts'
 import { processStyle, createStyleManager, normalizeCssValue } from './style/index.ts'
 
 let fixmeIdCounter = 0
@@ -161,6 +162,11 @@ export function createScheduler() {
       let batch = new Map(scheduled)
       scheduled.clear()
 
+      let hasWork = batch.size > 0 || tasks.length > 0
+      if (!hasWork) return
+
+      documentState.capture()
+
       if (batch.size > 0) {
         let vnodes = Array.from(batch)
 
@@ -172,6 +178,9 @@ export function createScheduler() {
           renderComponent(handle, curr, vnode, domParent, handle.frame, this, vParent, anchor)
         }
       }
+
+      // restore after rendering, before user tasks so users can move focus/selection etc.
+      documentState.restore()
 
       if (tasks.length > 0) {
         for (let task of tasks) {
@@ -203,9 +212,14 @@ export function createRangeRoot(
     render(element: Remix.Node) {
       let vnode = toVNode(element)
       let vParent: VNode = { type: ROOT_VNODE, _svg: false }
-      diffVNodes(root, vnode, container, frameStub, scheduler, vParent, end, hydrationCursor)
-      root = vnode
-      hydrationCursor = null
+      scheduler.enqueueTasks([
+        () => {
+          diffVNodes(root, vnode, container, frameStub, scheduler, vParent, end, hydrationCursor)
+          root = vnode
+          hydrationCursor = null
+        },
+      ])
+      scheduler.dequeue()
     },
 
     remove() {
@@ -231,9 +245,23 @@ export function createRoot(
     render(element: Remix.Node) {
       let vnode = toVNode(element)
       let vParent: VNode = { type: ROOT_VNODE, _svg: false }
-      diffVNodes(root, vnode, container, frameStub, scheduler, vParent, undefined, hydrationCursor)
-      root = vnode
-      hydrationCursor = undefined
+      scheduler.enqueueTasks([
+        () => {
+          diffVNodes(
+            root,
+            vnode,
+            container,
+            frameStub,
+            scheduler,
+            vParent,
+            undefined,
+            hydrationCursor,
+          )
+          root = vnode
+          hydrationCursor = undefined
+        },
+      ])
+      scheduler.dequeue()
     },
 
     remove() {

@@ -13,6 +13,8 @@ function App(this: Remix.Handle) {
     { id: 'd', label: 'Item D' },
   ]
 
+  let shuffleInterval: ReturnType<typeof setInterval> | null = null
+
   let moveUp = (index: number) => {
     if (index === 0) return
     let newItems = [...items]
@@ -44,6 +46,18 @@ function App(this: Remix.Handle) {
     this.update()
   }
 
+  let toggleAutoShuffle = () => {
+    if (shuffleInterval !== null) {
+      clearInterval(shuffleInterval)
+      shuffleInterval = null
+    } else {
+      shuffleInterval = setInterval(() => {
+        shuffle()
+      }, 1000)
+    }
+    this.update()
+  }
+
   return () => (
     <div>
       <div className="controls">
@@ -60,6 +74,13 @@ function App(this: Remix.Handle) {
           }}
         >
           Shuffle List
+        </button>
+        <button
+          on={{
+            click: toggleAutoShuffle,
+          }}
+        >
+          {shuffleInterval !== null ? 'Stop Auto-Shuffle' : 'Start Auto-Shuffle'}
         </button>
       </div>
 
