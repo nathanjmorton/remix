@@ -39,7 +39,9 @@
     "typescript": "catalog:"
   },
   "peerDependencies": {
+    "@remix-run/form-data-parser": "workspace:^",
     "@remix-run/headers": "workspace:^",
+    "@remix-run/html-template": "workspace:^",
     "@remix-run/route-pattern": "workspace:^",
     "@remix-run/session": "workspace:^"
   },

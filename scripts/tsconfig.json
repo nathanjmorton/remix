@@ -1,8 +1,9 @@
 {
   "compilerOptions": {
-    "lib": ["DOM", "ES2020"],
+    "lib": ["ES2024"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "resolveJsonModule": true,
     "strict": true,
     "allowJs": true,
     "checkJs": true,
