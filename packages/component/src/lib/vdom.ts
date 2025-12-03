@@ -403,7 +403,9 @@ function diffCatch(
       diffVNodes(child, next._children[i], domParent, frame, scheduler, vParent)
       added.unshift(child)
     }
-    commitCatch(curr, { _parent: vParent, _tripped: false, _added: added })
+    curr._parent = vParent
+    curr._tripped = false
+    curr._added = added
   } catch (e: unknown) {
     for (let child of added) {
       remove(child, domParent, scheduler)
@@ -411,7 +413,9 @@ function diffCatch(
     let fallbackNode = getCatchFallback(next, e)
     let anchor = findFirstDomAnchor(curr) || findNextSiblingDomAnchor(curr, vParent) || undefined
     insert(fallbackNode, domParent, frame, scheduler, vParent, anchor)
-    commitCatch(curr, { _parent: vParent, _tripped: true, _added: [fallbackNode] })
+    curr._parent = vParent
+    curr._tripped = true
+    curr._added = [fallbackNode]
     dispatchError(e)
   }
 }
@@ -441,14 +445,41 @@ function diffHost(
 ) {
   diffChildren(curr._children, next._children, curr._dom, frame, scheduler, next)
   diffHostProps(curr.props, next.props, curr._dom)
-  let extras = {
-    _dom: curr._dom,
-    _parent: vParent,
-    _events: curr._events,
-    _controller: curr._controller,
-  }
-  commitHost(next, extras, scheduler, domParent, frame)
+
+  next._dom = curr._dom
+  next._parent = vParent
+  next._events = curr._events
+  next._controller = curr._controller
+
+  let on = next.props.on
+  let eventsContainer = curr._events
+  scheduler.enqueueTasks([() => eventsContainer.set(on || {})])
+
   return
+}
+
+function setupHostNode(
+  node: HostNode,
+  dom: Element,
+  domParent: ParentNode,
+  frame: FrameHandle,
+  scheduler: Scheduler,
+): void {
+  node._dom = dom
+
+  let on = node.props.on
+  let eventsContainer = createContainer(dom, {
+    onError: (error) => raise(error, node, domParent, frame, scheduler),
+  })
+  scheduler.enqueueTasks([() => eventsContainer.set(on || {})])
+
+  let connect = node.props.connect
+  let controller = new AbortController()
+  if (connect) {
+    scheduler.enqueueTasks([() => connect(dom, controller.signal)])
+  }
+  node._events = eventsContainer
+  node._controller = controller
 }
 
 function diffCssProp(curr: Remix.ElementProps, next: Remix.ElementProps, dom: Element) {
@@ -666,7 +697,8 @@ function diffText(curr: CommittedTextNode, next: TextNode, scheduler: Scheduler,
   if (curr._text !== next._text) {
     curr._dom.textContent = next._text
   }
-  commitText(next, { _dom: curr._dom, _parent: vParent })
+  next._dom = curr._dom
+  next._parent = vParent
 }
 
 function logHydrationMismatch(...msg: any[]) {
@@ -694,7 +726,8 @@ function insert(
 
   if (isTextNode(node)) {
     if (cursor instanceof Text) {
-      commitText(node, { _dom: cursor, _parent: vParent })
+      node._dom = cursor
+      node._parent = vParent
       // correct hydration mismatch
       if (cursor.data !== node._text) {
         logHydrationMismatch('text mismatch', cursor.data, node._text)
@@ -703,7 +736,8 @@ function insert(
       return cursor.nextSibling
     }
     let dom = document.createTextNode(node._text)
-    commitText(node, { _dom: dom, _parent: vParent })
+    node._dom = dom
+    node._parent = vParent
     doInsert(dom)
     return cursor
   }
@@ -714,7 +748,8 @@ function insert(
         // FIXME: hydrate css prop
         // correct hydration mismatches
         diffHostProps({}, node.props, cursor)
-        commitHost(node, { _dom: cursor, _parent: vParent }, scheduler, domParent, frame)
+        setupHostNode(node, cursor, domParent, frame, scheduler)
+
         let childCursor = cursor.firstChild
         // FIXME: this breaks other tests
         // if (node._children.length > 1 && node._children.every(isTextNode)) {
@@ -737,7 +772,7 @@ function insert(
       : document.createElement(node.type)
     diffHostProps({}, node.props, dom)
     diffChildren(null, node._children, dom, frame, scheduler, node)
-    commitHost(node, { _dom: dom, _parent: vParent }, scheduler, domParent, frame)
+    setupHostNode(node, dom, domParent, frame, scheduler)
     doInsert(dom)
     return cursor
   }
@@ -758,14 +793,18 @@ function insert(
         insert(child, domParent, frame, scheduler, node, anchor)
         added.unshift(child)
       }
-      commitCatch(node, { _parent: vParent, _tripped: false, _added: added })
+      node._parent = vParent
+      node._tripped = false
+      node._added = added
     } catch (e: unknown) {
       let fallback = getCatchFallback(node, e)
       for (let child of added) {
         remove(child, domParent, scheduler)
       }
       insert(fallback, domParent, frame, scheduler, node, anchor)
-      commitCatch(node, { _parent: vParent, _tripped: true, _added: [fallback] })
+      node._parent = vParent
+      node._tripped = true
+      node._added = [fallback]
       dispatchError(e)
     }
 
@@ -803,7 +842,11 @@ function renderComponent(
   let content = toVNode(element)
 
   diffVNodes(currContent, content, domParent, frame, scheduler, next, anchor, cursor)
-  let committed = commitComponent(next, { _content: content, _handle: handle, _parent: vParent })
+  next._content = content
+  next._handle = handle
+  next._parent = vParent
+
+  let committed = next as CommittedComponentNode
 
   handle.setScheduleUpdate(() => {
     scheduler.enqueue(committed, domParent, anchor)
@@ -1115,59 +1158,6 @@ function diffChildren(
   return
 }
 
-function commitText(node: TextNode, extras: { _dom: Text; _parent?: VNode }): CommittedTextNode {
-  return Object.assign(node, extras)
-}
-
-function commitComponent(
-  node: ComponentNode,
-  extras: { _content: VNode; _handle: ComponentHandle; _parent?: VNode },
-): CommittedComponentNode {
-  return Object.assign(node, extras)
-}
-
-function commitCatch(
-  node: CatchNode,
-  extras: { _parent?: VNode; _tripped: boolean; _added?: VNode[] },
-): CatchNode {
-  return Object.assign(node, extras)
-}
-
-function commitHost(
-  node: HostNode,
-  extras: {
-    _dom: Element
-    _parent?: VNode
-    _events?: EventsContainer<EventTarget>
-    _controller?: AbortController
-  },
-  scheduler: Scheduler,
-  domParent: ParentNode,
-  frame: FrameHandle,
-): CommittedHostNode {
-  let _dom = extras._dom
-  let on = node.props.on
-
-  if (isCommittedHostNode(node)) {
-    scheduler.enqueueTasks([() => node._events.set(on || {})])
-    return node
-  }
-
-  let eventsContainer =
-    extras._events ??
-    createContainer(_dom, {
-      onError: (error) => raise(error, node, domParent, frame, scheduler),
-    })
-  scheduler.enqueueTasks([() => eventsContainer.set(on || {})])
-  let connect = node.props.connect
-  let controller = extras._controller ?? new AbortController()
-  if (connect && !extras._controller) {
-    scheduler.enqueueTasks([() => connect(_dom, controller.signal)])
-  }
-
-  return Object.assign(node, extras, { _events: eventsContainer, _controller: controller })
-}
-
 function dispatchError(error: unknown) {
   // TODO: dispatch on root target
   // console.error(error)
@@ -1196,7 +1186,8 @@ function raise(
     for (let child of catchBoundary._added) {
       remove(child, domParent, scheduler)
     }
-    commitCatch(catchBoundary, { _tripped: true, _added: [content] })
+    catchBoundary._tripped = true
+    catchBoundary._added = [content]
   } else {
     dispatchError(error)
   }
