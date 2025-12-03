@@ -937,13 +937,6 @@ function remove(node: VNode, domParent: ParentNode, scheduler: Scheduler) {
     return
   }
 
-  if (isFragmentNode(node)) {
-    for (let child of node._children) {
-      remove(child, domParent, scheduler)
-    }
-    return
-  }
-
   if (isCommittedCatchNode(node)) {
     for (let child of node._added) {
       remove(child, domParent, scheduler)

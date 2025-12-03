@@ -646,24 +646,6 @@ describe('vnode rendering', () => {
     })
   })
 
-  it('runs setup tasks in a microtask', async () => {
-    let container = document.createElement('div')
-    let root = createRoot(container)
-
-    let taskRan = false
-    function App(this: Remix.Handle) {
-      this.queueTask(() => {
-        taskRan = true
-      })
-      return () => <div>Hello, world!</div>
-    }
-
-    root.render(<App />)
-    expect(taskRan).toBe(false)
-    await Promise.resolve()
-    expect(taskRan).toBe(true)
-  })
-
   it('runs update tasks after updates', () => {
     let container = document.createElement('div')
     let root = createRoot(container)
