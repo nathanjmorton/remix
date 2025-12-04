@@ -22,7 +22,7 @@ export interface StaticFilesOptions extends Omit<FileResponseOptions, 'acceptRan
    * Filter function to determine which files should be served.
    *
    * @param path The relative path being requested
-   * @return Whether to serve the file
+   * @returns Whether to serve the file
    */
   filter?: (path: string) => boolean
 
@@ -78,7 +78,7 @@ export interface StaticFilesOptions extends Omit<FileResponseOptions, 'acceptRan
  *
  * @param root The root directory to serve files from (absolute or relative to cwd)
  * @param options Configuration for file responses
- * @return The static files middleware
+ * @returns The static files middleware
  */
 export function staticFiles(root: string, options: StaticFilesOptions = {}): Middleware {
   // Ensure root is an absolute path

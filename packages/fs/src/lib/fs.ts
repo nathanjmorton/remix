@@ -37,7 +37,7 @@ export interface OpenFileOptions {
  *
  * @param filename The path to the file
  * @param options Options to override the file's metadata
- * @return A `File` object
+ * @returns A `File` object
  */
 export function openFile(filename: string, options?: OpenFileOptions): File {
   let stats = fs.statSync(filename)
@@ -89,7 +89,7 @@ export { type OpenFileOptions as GetFileOptions, openFile as getFile }
  *
  * @param to The path to write the file to, or an open file descriptor
  * @param file The file to write
- * @return A promise that resolves when the file is written
+ * @returns A promise that resolves when the file is written
  */
 export function writeFile(to: string | number | fs.promises.FileHandle, file: File): Promise<void> {
   return new Promise(async (resolve, reject) => {
