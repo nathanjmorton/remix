@@ -228,103 +228,147 @@ function getNormalizedComment(
   node: typedoc.Reflection,
   typedocComment: typedoc.Comment,
 ): Comment {
-  // The Function->CallSignature nesting results in a duplication of the
-  // function name so confirm and pop off the dup and process the
-  // CallSignature which will, just overwrite the Function entry in our maps
-  let nameParts = fullName.split('.')
-  let docPath =
-    nameParts
-      .filter((s, i) => nameParts[i - 1] !== s)
-      .map((s) => s.replace(/^@/g, ''))
-      .map((s) => s.replace(/\//g, '-'))
-      .join('/') + '.md'
+  try {
+    // The Function->CallSignature nesting results in a duplication of the
+    // function name so confirm and pop off the dup and process the
+    // CallSignature which will, just overwrite the Function entry in our maps
+    let nameParts = fullName.split('.')
+    let docPath =
+      nameParts
+        .filter((s, i) => nameParts[i - 1] !== s)
+        .map((s) => s.replace(/^@/g, ''))
+        .map((s) => s.replace(/\//g, '-'))
+        .join('/') + '.md'
 
-  let name = node.name
-  let description = typedocComment.summary
-    .map((part) => ('text' in part ? part.text : ''))
-    .join('')
-    .trim()
+    let name = node.name
+    let description = typedocComment.summary
+      .map((part) => ('text' in part ? part.text : ''))
+      .join('')
+      .trim()
 
-  let comment: Comment
+    let comment: Comment
 
-  if (node.isSignature()) {
-    let params = node.parameters ?? []
+    if (node.isSignature()) {
+      let params = node.parameters ?? []
 
-    let returns = node.comment?.getTag('@returns')?.content
-    if (!returns) {
-      console.warn(`Missing @returns tag for function: ${name}`)
+      let returns = node.comment?.getTag('@returns')?.content
+      if (!returns) {
+        console.warn(`Missing @returns tag for function: ${name}`)
+      }
+
+      let example = node.comment?.getTag('@example')?.content
+
+      comment = {
+        docPath,
+        type: 'function',
+        name,
+        aliases: undefined,
+        description,
+        example: example ? combineCommentParts(example) : undefined,
+        parameters: params.flatMap((tag) => {
+          if (tag.type?.type === 'reference') {
+            let shorthand = tag.type.name
+            let full = maps.shorthandMap.get(shorthand)
+            let api = full ? maps.apiMap.get(full) : null
+
+            if (!api) {
+              console.warn(`Could not resolve referenced parameter type: ${shorthand}/${full}`)
+              return []
+            }
+
+            if (api.kind === typedoc.ReflectionKind.Class) {
+              if (!tag.comment?.summary) {
+                console.warn(`Missing comment for parameter: ${tag.name}`)
+                return []
+              }
+              return [
+                {
+                  name: tag.name,
+                  description: combineCommentParts(tag.comment.summary),
+                },
+              ]
+            }
+
+            if (api.kind === typedoc.ReflectionKind.Interface) {
+              if (!(api && 'children' in api && Array.isArray(api.children))) {
+                console.warn(`Expected children parameters for ${full}`)
+                return []
+              }
+              if (!api.children.every((child) => child.comment?.summary)) {
+                if (!tag.comment?.summary) {
+                  console.warn(`Missing comment for parameter: ${tag.name}`)
+                  return []
+                }
+                return [
+                  {
+                    name: tag.name,
+                    description: combineCommentParts(tag.comment.summary),
+                  },
+                ]
+              }
+              return api.children.map((child) => {
+                return {
+                  name: [tag.name, child.name].join('.'),
+                  description: combineCommentParts(child.comment.summary),
+                } satisfies Parameter
+              })
+            }
+
+            console.warn(
+              `Unimplemented referenced parameter type kind: ${typedoc.ReflectionKind[api.kind]}`,
+            )
+            return []
+          } else {
+            if (!tag.comment?.summary) {
+              console.warn(`Missing comment for parameter: ${tag.name}`)
+              return []
+            }
+            return [
+              {
+                name: tag.name,
+                description: combineCommentParts(tag.comment.summary),
+              },
+            ] satisfies Parameter[]
+          }
+        }),
+        returns: returns ? combineCommentParts(returns) : undefined,
+      } satisfies FunctionComment
+    } else if (node.kind === typedoc.ReflectionKind.Class) {
+      comment = {
+        docPath,
+        type: 'class',
+        name,
+        aliases: undefined,
+        description,
+        example: undefined,
+        properties: undefined,
+        methods: undefined,
+      } satisfies ClassComment
+    } else {
+      console.log('Unimplemented kind for comment:', typedoc.ReflectionKind[node.kind])
+      return {
+        docPath,
+        type: 'function',
+        name,
+        aliases: undefined,
+        description,
+        example: 'TODO:',
+        parameters: [
+          {
+            name: 'TODO:',
+            description: 'TODO:',
+          },
+        ],
+        returns: 'TODO:',
+      }
     }
 
-    let example = node.comment?.getTag('@example')?.content
-
-    comment = {
-      docPath,
-      type: 'function',
-      name,
-      aliases: undefined,
-      description,
-      example: example ? combineCommentParts(example) : undefined,
-      parameters: params.flatMap((tag) => {
-        if (tag.type?.type === 'reference') {
-          let shorthand = tag.type.name
-          let full = maps.shorthandMap.get(shorthand)
-          let api = full ? maps.apiMap.get(full) : null
-          if (!(api && 'children' in api && Array.isArray(api.children))) {
-            console.warn(`Expected children parameters for ${full}`)
-            return []
-          }
-          return api.children.map((child) => {
-            return {
-              name: [tag.name, child.name].join('.'),
-              description: combineCommentParts(child.comment.summary),
-            } satisfies Parameter
-          })
-        } else {
-          if (!tag.comment?.summary) {
-            console.warn(`Missing comment for parameter: ${tag.name}`)
-            return []
-          }
-          return [
-            {
-              name: tag.name,
-              description: combineCommentParts(tag.comment.summary),
-            },
-          ] satisfies Parameter[]
-        }
-      }),
-      returns: returns ? combineCommentParts(returns) : undefined,
-    } satisfies FunctionComment
-  } else if (node.kind === typedoc.ReflectionKind.Class) {
-    comment = {
-      docPath,
-      type: 'class',
-      name,
-      aliases: undefined,
-      description,
-      example: undefined,
-      properties: undefined,
-      methods: undefined,
-    } satisfies ClassComment
-  } else {
-    console.log('Unimplemented kind for comment:', typedoc.ReflectionKind[node.kind])
-    return {
-      docPath,
-      type: 'function',
-      name,
-      aliases: undefined,
-      description,
-      example: 'TODO:',
-      parameters: [
-        {
-          name: 'TODO:',
-          description: 'TODO:',
-        },
-      ],
-      returns: 'TODO:',
-    }
+    return comment
+  } catch (e) {
+    throw new Error(`Error normalizing comment for ${fullName}: ${(e as Error).message}`, {
+      cause: e,
+    })
   }
-
-  return comment
 }
 
 function combineCommentParts(parts: typedoc.CommentDisplayPart[]): string {
@@ -352,7 +396,10 @@ async function writeMarkdownFile(name: string, comment: Comment, path: string) {
       h1(name),
       h2('Summary', comment.description),
       comment.example ? h2('Example', comment.example) : undefined,
-      h2('Params', comment.parameters.map((param) => h3(param.name, param.description)).join('')),
+      h2(
+        'Params',
+        comment.parameters.map((param) => h3(param.name, param.description)).join('\n\n'),
+      ),
       comment.returns ? h2('Returns', comment.returns) : undefined,
     ]
 
@@ -364,11 +411,11 @@ async function writeMarkdownFile(name: string, comment: Comment, path: string) {
       h2('Summary', comment.description),
       comment.example ? h2('Example', comment.example) : undefined,
       comment.properties
-        ? h2('Properties', comment.properties.map((p) => h3(p.name, p.description)).join(''))
+        ? h2('Properties', comment.properties.map((p) => h3(p.name, p.description)).join('\n\n'))
         : undefined,
       comment.methods
         ? // TODO: Document method parameters?
-          h2('Methods', comment.methods.map((m) => h3(m.name, m.description)).join(''))
+          h2('Methods', comment.methods.map((m) => h3(m.name, m.description)).join('\n\n'))
         : undefined,
     ]
 
