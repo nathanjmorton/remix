@@ -1,0 +1,17 @@
+{
+  "name": "remix-the-docs",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@types/node": "catalog:",
+    "@remix-run/fetch-router": "workspace:*",
+    "@remix-run/html-template": "workspace:*",
+    "@remix-run/node-fetch-server": "workspace:*",
+    "@remix-run/response": "workspace:*",
+    "@remix-run/static-middleware": "workspace:*",
+    "marked": "^14.1.3"
+  },
+  "devDependencies": {
+    "typedoc": "^0.28.15"
+  }
+}

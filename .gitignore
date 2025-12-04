@@ -1,5 +1,6 @@
 dist/
-docs/
+docs/api/
+docs/typedoc/
 node_modules/
 reference/
 .tmp/

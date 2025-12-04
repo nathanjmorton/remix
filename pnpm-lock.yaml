@@ -44,9 +44,6 @@ importers:
       tsx:
         specifier: 'catalog:'
         version: 4.20.6
-      typedoc:
-        specifier: ^0.28.15
-        version: 0.28.15(typescript@5.9.3)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
@@ -206,6 +203,34 @@ importers:
       tsx:
         specifier: 'catalog:'
         version: 4.20.6
+
+  docs:
+    dependencies:
+      '@remix-run/fetch-router':
+        specifier: workspace:*
+        version: link:../packages/fetch-router
+      '@remix-run/html-template':
+        specifier: workspace:*
+        version: link:../packages/html-template
+      '@remix-run/node-fetch-server':
+        specifier: workspace:*
+        version: link:../packages/node-fetch-server
+      '@remix-run/response':
+        specifier: workspace:*
+        version: link:../packages/response
+      '@remix-run/static-middleware':
+        specifier: workspace:*
+        version: link:../packages/static-middleware
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.6.0
+      marked:
+        specifier: ^14.1.3
+        version: 14.1.4
+    devDependencies:
+      typedoc:
+        specifier: ^0.28.15
+        version: 0.28.15(typescript@5.9.3)
 
   packages/async-context-middleware:
     devDependencies:
@@ -3171,6 +3196,11 @@ packages:
     resolution: {integrity: sha512-a54IwgWPaeBCAAsv13YgmALOF1elABB08FxO9i+r4VFk5Vl4pKokRPeX8u5TCgSsPi6ec1otfLjdOpVcgbpshg==}
     hasBin: true
 
+  marked@14.1.4:
+    resolution: {integrity: sha512-vkVZ8ONmUdPnjCKc5uTRvmkRbx4EAi2OkTOXmfTDhZz3OFqMNBM1oTTWwTr4HY4uAEojhzPf+Fy8F1DWa3Sndg==}
+    engines: {node: '>= 18'}
+    hasBin: true
+
   mdurl@2.0.0:
     resolution: {integrity: sha512-Lf+9+2r+Tdp5wXDXC4PcIBjTDtq4UKjCPMQhKIuzpJNW0b96kVqSwW0bT7FhRSfmAiFYgP+SCRvdrDozfh0U5w==}
 
@@ -6058,6 +6088,8 @@ snapshots:
       mdurl: 2.0.0
       punycode.js: 2.3.1
       uc.micro: 2.1.0
+
+  marked@14.1.4: {}
 
   mdurl@2.0.0: {}
 
