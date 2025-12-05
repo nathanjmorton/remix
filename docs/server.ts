@@ -17,8 +17,21 @@ interface DocFile {
   urlPath: string
 }
 
-function discoverMarkdownFiles(): DocFile[] {
+async function discoverMarkdownFiles(): Promise<DocFile[]> {
   let files: DocFile[] = []
+
+  let packagesDir = path.resolve(process.cwd(), 'packages')
+  let packageJsons = fs
+    .readdirSync(packagesDir, { withFileTypes: true })
+    .map((d) => path.join(packagesDir, d.name, 'package.json'))
+  let pkgMap: Record<string, string> = {}
+  await Promise.all(
+    packageJsons.map(async (pkgPath) => {
+      let { name } = JSON.parse(await fs.promises.readFile(pkgPath, 'utf-8'))
+      let urlName = name.replace(/^@remix-run\//, '').replace(/\//g, '-')
+      pkgMap[urlName] = name
+    }),
+  )
 
   function walk(dir: string) {
     let entries = fs.readdirSync(dir, { withFileTypes: true })
@@ -30,7 +43,7 @@ function discoverMarkdownFiles(): DocFile[] {
         walk(fullPath)
       } else if (entry.isFile() && entry.name.endsWith('.md')) {
         let relativePath = path.relative(DOCS_DIR, fullPath)
-        let packageName = relativePath.split(path.sep)[0]
+        let packageName = pkgMap[relativePath.split(path.sep)[0]]
         let urlPath = '/docs/' + relativePath.replace(/\.md$/, '').replace(/\\/g, '/')
 
         files.push({
@@ -47,7 +60,7 @@ function discoverMarkdownFiles(): DocFile[] {
   return files.sort((a, b) => a.urlPath.localeCompare(b.urlPath))
 }
 
-let docFiles = discoverMarkdownFiles()
+let docFiles = await discoverMarkdownFiles()
 
 function buildNavigation(currentPath: string): string {
   let packageGroups = new Map<string, DocFile[]>()
@@ -137,7 +150,6 @@ let routes = route({
   home: '/',
 })
 
-debugger
 let router = createRouter({
   middleware: [staticFiles(path.resolve(process.cwd(), 'docs/public'))],
 })

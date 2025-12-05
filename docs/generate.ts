@@ -4,6 +4,12 @@ import util from 'node:util'
 import * as typedoc from 'typedoc'
 import packageJson from '../packages/remix/package.json' with { type: 'json' }
 
+// TODO:
+// - Handle embedded {@link} tags for cross-linking
+// - Display method parameter types
+// - Try to generate type signatures for functions?
+// - Handle preferring exports from remix package versus others
+
 /***** Types *****/
 
 type Parameter = {
@@ -85,17 +91,16 @@ let { values: cliArgs } = util.parseArgs({
 
 main()
 
-let projectReflection: typedoc.ProjectReflection
-let maps: Maps
-
 async function main() {
-  projectReflection = await loadTypedocJson()
-  maps = createLookupMaps(projectReflection)
+  // Load the full TypeDoc project and walk it to create a lookup map and
+  // determine which APIs we want to generate documentation for
+  let project = await loadTypedocJson()
+  let { apiMap, apisToDocument } = createLookupMaps(project)
 
-  let comments = [...maps.apisToDocument].map((name) =>
-    getNormalizedComment(maps.apiMap.get(name)!),
-  )
+  // Parse JSDocs into Comments we can write out to markdown
+  let comments = [...apisToDocument].map((name) => getNormalizedComment(apiMap.get(name)!))
 
+  // Write out docs
   await writeMarkdownFiles(comments)
 }
 
@@ -106,8 +111,6 @@ async function main() {
 async function loadTypedocJson(): Promise<typedoc.ProjectReflection> {
   if (cliArgs.input) {
     log(`Loading TypeDoc JSON from: ${cliArgs.input}`)
-
-    log(`Generating TypeDoc from project`)
     let app = await typedoc.Application.bootstrap({
       name: packageJson.name,
       entryPoints: [cliArgs.input],
@@ -303,14 +306,10 @@ function getSharedComment(
   node: typedoc.Reflection,
   typedocComment: typedoc.Comment,
 ): Pick<Comment, 'docPath' | 'name' | 'description'> {
-  // The Function->CallSignature nesting results in a duplication of the
-  // function name so confirm and pop off the dup and process the
-  // CallSignature which will, just overwrite the Function entry in our maps
   let nameParts = node.getFriendlyFullName().split('.')
   let docPath =
     nameParts
-      .filter((s, i) => nameParts[i - 1] !== s)
-      .map((s) => s.replace(/^@/g, ''))
+      .map((s) => s.replace(/^@remix-run\//g, ''))
       .map((s) => s.replace(/\//g, '-'))
       .join('/') + '.md'
 
