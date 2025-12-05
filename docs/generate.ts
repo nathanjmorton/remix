@@ -6,30 +6,6 @@ import packageJson from '../packages/remix/package.json' with { type: 'json' }
 
 /***** Types *****/
 
-type Comment = FunctionComment | ClassComment
-
-type FunctionComment = {
-  docPath: string
-  type: 'function'
-  name: string
-  aliases: string[] | undefined
-  description: string
-  example: string | undefined
-  parameters: Parameter[]
-  returns: string | undefined
-}
-
-type ClassComment = {
-  docPath: string
-  type: 'class'
-  name: string
-  aliases: string[] | undefined
-  description: string
-  example: string | undefined
-  properties: Property[] | undefined
-  methods: Method[] | undefined
-}
-
 type Parameter = {
   name: string
   description: string
@@ -44,12 +20,32 @@ type Method = {
   name: string
   description: string
   parameters: Parameter[]
+  returns: string | undefined
 }
+
+type FunctionComment = Method & {
+  docPath: string
+  type: 'function'
+  aliases: string[] | undefined
+  example: string | undefined
+}
+
+type ClassComment = {
+  docPath: string
+  type: 'class'
+  name: string
+  aliases: string[] | undefined
+  description: string
+  example: string | undefined
+  constructor: Method | undefined
+  properties: Property[] | undefined
+  methods: Method[] | undefined
+}
+
+type Comment = FunctionComment | ClassComment
 
 type Maps = {
   apiMap: Map<string, typedoc.Reflection> // full name => TypeDoc Reflection
-  shorthandMap: Map<string, string> // short name => full name
-  aliasMap: Map<string, Set<string>> // full name => Set<full name>
   apisToDocument: Set<string> // APIS we should generate docs for
 }
 
@@ -89,17 +85,16 @@ let { values: cliArgs } = util.parseArgs({
 
 main()
 
+let projectReflection: typedoc.ProjectReflection
 let maps: Maps
 
 async function main() {
-  let reflection = await loadTypedocJson()
+  projectReflection = await loadTypedocJson()
+  maps = createLookupMaps(projectReflection)
 
-  maps = createLookupMaps(reflection)
-
-  let comments = [...maps.apisToDocument].map((name) => {
-    let node = maps.apiMap.get(name)!
-    return getNormalizedComment(name, node, node.comment!)
-  })
+  let comments = [...maps.apisToDocument].map((name) =>
+    getNormalizedComment(maps.apiMap.get(name)!),
+  )
 
   await writeMarkdownFiles(comments)
 }
@@ -150,8 +145,6 @@ async function loadTypedocJson(): Promise<typedoc.ProjectReflection> {
 function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
   let apiMap = new Map<string, typedoc.Reflection>()
   let apisToComment = new Set<string>()
-  let shorthandMap = new Map<string, string>()
-  let aliasMap = new Map<string, Set<string>>()
   let referenceTargetMap = new Map<string, number>()
 
   // Reflections we want to traverse through to find documented APIs
@@ -167,7 +160,7 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
 
   recurse(reflection)
 
-  return { apiMap, shorthandMap, aliasMap, apisToDocument: apisToComment }
+  return { apiMap, apisToDocument: apisToComment }
 
   function recurse(node: typedoc.Reflection) {
     node.traverse((child) => {
@@ -180,14 +173,17 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
         return
       }
 
-      let fullName = child.getFriendlyFullName()
-      apiMap.set(fullName, child)
-      shorthandMap.set(child.name, fullName)
+      apiMap.set(child.getFriendlyFullName(), child)
 
       let indent = '  '.repeat(child.getFriendlyFullName().split('.').length - 1)
       let logApi = (suffix: string) =>
         log(
-          `${indent}[${typedoc.ReflectionKind[child.kind]}] ${child.name} - ${fullName} (${child.id}) (${suffix})`,
+          [
+            `${indent}[${typedoc.ReflectionKind[child.kind]}]`,
+            child.getFriendlyFullName(),
+            `(${child.id})`,
+            `(${suffix})`,
+          ].join(' '),
         )
 
       // Reference types are aliases - stick them off into a separate map for post-processing
@@ -197,7 +193,7 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
         typeof child._target === 'number'
       ) {
         logApi(`reference to ${child._target}`)
-        referenceTargetMap.set(fullName, child._target)
+        referenceTargetMap.set(child.getFriendlyFullName(), child._target)
         return
       }
 
@@ -208,8 +204,8 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
       }
 
       // Grab APIs with JSDoc comments that we should generate docs for
-      if (child.comment) {
-        apisToComment.add(fullName)
+      if (child.comment && (!cliArgs.api || child.name === cliArgs.api)) {
+        apisToComment.add(child.getFriendlyFullName())
         logApi(`commenting`)
       }
 
@@ -221,109 +217,155 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
   }
 }
 
-function getNormalizedComment(
-  fullName: string,
-  node: typedoc.Reflection,
-  typedocComment: typedoc.Comment,
-): Comment {
+function getNormalizedComment(node: typedoc.Reflection): Comment {
   try {
-    // The Function->CallSignature nesting results in a duplication of the
-    // function name so confirm and pop off the dup and process the
-    // CallSignature which will, just overwrite the Function entry in our maps
-    let nameParts = fullName.split('.')
-    let docPath =
-      nameParts
-        .filter((s, i) => nameParts[i - 1] !== s)
-        .map((s) => s.replace(/^@/g, ''))
-        .map((s) => s.replace(/\//g, '-'))
-        .join('/') + '.md'
-
-    let name = node.name
-    let description = typedocComment.summary
-      .map((part) => ('text' in part ? part.text : ''))
-      .join('')
-      .trim()
-
-    let comment: Comment
-
     if (node.isSignature()) {
-      let params: Parameter[] = []
-      node.traverse((tag) => {
-        // Only process params, not type params (generics)
-        if (!tag.isParameter()) return
-        params = params.concat(getParameters(tag))
-      })
-
-      let returns = node.comment?.getTag('@returns')?.content
-      if (!returns) {
-        warn(`Missing @returns tag for function: ${name}`)
-      }
-
-      let example = node.comment?.getTag('@example')?.content
-
-      comment = {
-        docPath,
-        type: 'function',
-        name,
-        aliases: undefined,
-        description,
-        example: example ? combineCommentParts(example) : undefined,
-        parameters: params,
-        returns: returns ? combineCommentParts(returns) : undefined,
-      } satisfies FunctionComment
-    } else if (node.kind === typedoc.ReflectionKind.Class) {
-      comment = {
-        docPath,
-        type: 'class',
-        name,
-        aliases: undefined,
-        description,
-        example: undefined,
-        properties: undefined,
-        methods: undefined,
-      } satisfies ClassComment
-    } else {
-      console.log('Unimplemented kind for comment:', typedoc.ReflectionKind[node.kind])
-      return {
-        docPath,
-        type: 'function',
-        name,
-        aliases: undefined,
-        description,
-        example: 'TODO:',
-        parameters: [
-          {
-            name: 'TODO:',
-            description: 'TODO:',
-          },
-        ],
-        returns: 'TODO:',
-      }
+      return getFunctionComment(node)
     }
 
-    return comment
+    if (node.isDeclaration() && node.kind === typedoc.ReflectionKind.Class) {
+      return getClassComment(node)
+    }
+
+    throw new Error(`Unsupported documented API kind: ${typedoc.ReflectionKind[node.kind]}`)
   } catch (e) {
-    throw new Error(`Error normalizing comment for ${fullName}: ${(e as Error).message}`, {
-      cause: e,
-    })
+    throw new Error(
+      `Error normalizing comment for ${node.getFriendlyFullName()}: ${(e as Error).message}`,
+      {
+        cause: e,
+      },
+    )
+  }
+}
+
+function getFunctionComment(node: typedoc.SignatureReflection): FunctionComment {
+  let method = getMethod(node)
+  invariant(method, `Failed to get method for function: ${node.getFriendlyFullName()}`)
+  return {
+    type: 'function',
+    aliases: undefined,
+    example: combineCommentParts(node.comment?.getTag('@example')?.content),
+    ...getSharedComment(node, node.comment!),
+    ...method,
+  } satisfies FunctionComment
+}
+
+function getClassComment(node: typedoc.DeclarationReflection): ClassComment {
+  let constructor: Method | undefined
+  let properties: Property[] = []
+  let methods: Method[] = []
+  node.traverse((child) => {
+    if (child.isDeclaration()) {
+      if (child.kind === typedoc.ReflectionKind.Constructor) {
+        let signature = child.getAllSignatures()[0]
+        invariant(
+          signature,
+          `Missing constructor signature for class: ${node.getFriendlyFullName()}`,
+        )
+        constructor = getMethod(signature)
+      } else if (child.kind === typedoc.ReflectionKind.Property) {
+        let property = getParameter(child)
+        if (property) {
+          properties.push(property)
+        }
+      } else if (child.kind === typedoc.ReflectionKind.Accessor) {
+        let property = getParameter(child.getSignature)
+        if (property) {
+          properties.push(property)
+        }
+      } else if (child.kind === typedoc.ReflectionKind.Method) {
+        let signature = child.getAllSignatures()[0]
+        invariant(`Missing method signature for class: ${child.getFriendlyFullName()}`)
+        let method = getMethod(signature)
+        if (method) {
+          methods.push(method)
+        }
+      } else {
+        unimplemented(
+          `class child kind: ${typedoc.ReflectionKind[child.kind]} ${node.getFriendlyFullName()}`,
+        )
+      }
+    }
+  })
+
+  return {
+    type: 'class',
+    aliases: undefined,
+    example: undefined,
+    ...getSharedComment(node, node.comment!),
+    constructor,
+    properties,
+    methods,
+  }
+}
+
+function getSharedComment(
+  node: typedoc.Reflection,
+  typedocComment: typedoc.Comment,
+): Pick<Comment, 'docPath' | 'name' | 'description'> {
+  // The Function->CallSignature nesting results in a duplication of the
+  // function name so confirm and pop off the dup and process the
+  // CallSignature which will, just overwrite the Function entry in our maps
+  let nameParts = node.getFriendlyFullName().split('.')
+  let docPath =
+    nameParts
+      .filter((s, i) => nameParts[i - 1] !== s)
+      .map((s) => s.replace(/^@/g, ''))
+      .map((s) => s.replace(/\//g, '-'))
+      .join('/') + '.md'
+
+  let name = node.name
+  let description = typedocComment.summary
+    .map((part) => ('text' in part ? part.text : ''))
+    .join('')
+    .trim()
+
+  return { docPath, name, description }
+}
+
+function getMethod(node: typedoc.SignatureReflection): Method | undefined {
+  let parameters: Parameter[] = []
+  node.traverse((child) => {
+    // Only process params, not type params (generics)
+    if (child.isParameter()) {
+      parameters = parameters.concat(getParameters(child))
+    } else if (child.isSignature()) {
+      child.traverse((param) => {
+        // Only process params, not type params (generics)
+        if (param.isParameter()) {
+          parameters = parameters.concat(getParameters(param))
+        }
+      })
+    }
+  })
+
+  if (!node.comment) {
+    warn(`missing comment for signature: ${node.getFriendlyFullName()}`)
+  }
+
+  let returns = node.comment?.getTag('@returns')?.content
+  return {
+    name: node.name,
+    description: combineCommentParts(node.comment?.summary) || '',
+    parameters,
+    returns: returns ? combineCommentParts(returns) : undefined,
   }
 }
 
 // Get one or more parameters to document for a single function param.
 // Results in multiple params when the function param is an object with nested
 // fields. For example: `func(options: { a: boolean, b: string })`
-function getParameters(node: typedoc.ParameterReflection): Parameter[] {
-  if (node.type?.type !== 'reference') {
+function getParameters(
+  node: typedoc.ParameterReflection | typedoc.ReferenceReflection,
+): Parameter[] {
+  if (!node.isReference()) {
     let param = getParameter(node)
     return param ? [param] : []
   }
 
-  // Reference params are a bit more complicated because they link off to
-  // another class or interface
-  let fullName = maps.shorthandMap.get(node.type.name)
-  let api = fullName ? resolveReferences(fullName) : undefined
+  let api = node.getTargetReflectionDeep()
 
-  if (!api) {
+  if (!api || api.kind === typedoc.ReflectionKind.TypeParameter) {
     return []
   }
 
@@ -336,61 +378,51 @@ function getParameters(node: typedoc.ParameterReflection): Parameter[] {
 
   // Expand out individual fields of interfaces
   if (api.kind === typedoc.ReflectionKind.Interface) {
-    if (!(api && 'children' in api && Array.isArray(api.children))) {
-      warn(`Expected children parameters for ${fullName}`)
-      return []
-    }
-
     let params: Parameter[] = []
     let param = getParameter(node)
     if (param) {
       params.push(param)
     }
 
-    api.children.forEach((child) => {
-      let childParam = getParameter(child, [node.name])
-      if (childParam) {
-        params.push(childParam)
-      } else {
-        warn(`Missing comment for parameter: ${child.name} in ${fullName}`)
+    api.traverse((child) => {
+      if (child.isDeclaration()) {
+        let childParam = getParameter(child, [node.name])
+        if (childParam) {
+          params.push(childParam)
+        } else {
+          warn(`Missing comment for parameter: ${child.name} in ${api.getFriendlyFullName()}`)
+        }
       }
     })
 
     return params
   }
 
-  warn(`Unimplemented referenced parameter type kind: ${typedoc.ReflectionKind[api.kind]}`)
-  return []
+  if (api.kind === typedoc.ReflectionKind.TypeAlias) {
+    let param = getParameter(node)
+    return param ? [param] : []
+  }
+
+  throw new Error(`Unhandled parameter kind: ${typedoc.ReflectionKind[api.kind]}`)
 }
 
 function getParameter(
-  node: typedoc.ParameterReflection | typedoc.DeclarationReflection,
+  node:
+    | typedoc.ParameterReflection
+    | typedoc.DeclarationReflection
+    | typedoc.SignatureReflection
+    | undefined,
   prefix: string[] = [],
 ): Parameter | undefined {
-  if (!node.comment?.summary) {
-    warn(`Missing comment for parameter: ${node.name}`)
-    return
-  }
+  invariant(node, 'Invalid node for comment')
   return {
     name: [...prefix, node.name].join('.'),
-    description: combineCommentParts(node.comment.summary),
+    description: combineCommentParts(node.comment?.summary) ?? '',
   }
 }
 
-function resolveReferences(name: string) {
-  let api = maps.apiMap.get(name)
-
-  if (!api) {
-    warn(`Could not resolve referenced parameter type: ${name}`)
-  } else if (api.isReference()) {
-    return resolveReferences(api.name)
-  } else {
-    return api
-  }
-}
-
-function combineCommentParts(parts: typedoc.CommentDisplayPart[]): string {
-  return parts.reduce((acc, part) => acc + part.text, '')
+function combineCommentParts(parts: typedoc.CommentDisplayPart[] | undefined): string | undefined {
+  return parts?.reduce((acc, part) => acc + part.text, '') ?? undefined
 }
 
 function resolveLinkTags(content: string): string {
@@ -401,57 +433,74 @@ function resolveLinkTags(content: string): string {
 /***** Markdown Generation ****/
 
 async function writeMarkdownFiles(comments: Comment[]) {
-  await fs.mkdir(path.dirname(cliArgs.docsDir), { recursive: true })
-
   for (let comment of comments) {
     let mdPath = path.join(cliArgs.docsDir, comment.docPath)
     await fs.mkdir(path.dirname(mdPath), { recursive: true })
-    await writeMarkdownFile(comment, mdPath)
+    log('✅ Writing markdown file:', mdPath)
+    if (comment.type === 'function') {
+      await fs.writeFile(mdPath, getFunctionMarkdown(comment))
+    } else if (comment.type === 'class') {
+      await fs.writeFile(mdPath, getClassMarkdown(comment))
+    }
   }
 }
 
-async function writeMarkdownFile(comment: Comment, path: string) {
-  let markdown: string
+const h = (level: number, heading: string, body?: string) =>
+  `${'#'.repeat(level)} ${heading}${body ? `\n\n${body}` : ''}`
+const h1 = (heading: string) => h(1, heading)
+const h2 = (heading: string, body: string) => h(2, heading, body)
+const h3 = (heading: string, body: string) => h(3, heading, body)
+const h4 = (heading: string, body: string) => h(4, heading, body)
 
-  let h1 = (heading: string) => `# ${heading}`
-  let h2 = (heading: string, body: string) => `## ${heading}\n\n${body}`
-  let h3 = (heading: string, body: string) => `### ${heading}\n\n${body}`
+function getFunctionMarkdown(comment: FunctionComment): string {
+  return [
+    `---\ntitle: ${comment.name}\n---`,
+    h1(comment.name),
+    h2('Summary', comment.description),
+    comment.example ? h2('Example', comment.example) : undefined,
+    h2('Params', comment.parameters.map((param) => h3(param.name, param.description)).join('\n\n')),
+    comment.returns ? h2('Returns', comment.returns) : undefined,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
 
-  if (comment.type === 'function') {
-    let sections = [
-      `---\ntitle: ${comment.name}\n---`,
-      h1(comment.name),
-      h2('Summary', comment.description),
-      comment.example ? h2('Example', comment.example) : undefined,
-      h2(
-        'Params',
-        comment.parameters.map((param) => h3(param.name, param.description)).join('\n\n'),
-      ),
-      comment.returns ? h2('Returns', comment.returns) : undefined,
-    ]
-
-    markdown = sections.filter(Boolean).join('\n\n')
-  } else if (comment.type === 'class') {
-    let sections = [
-      `---\ntitle: ${comment.name}\n---`,
-      h1(comment.name),
-      h2('Summary', comment.description),
-      comment.example ? h2('Example', comment.example) : undefined,
-      comment.properties
-        ? h2('Properties', comment.properties.map((p) => h3(p.name, p.description)).join('\n\n'))
-        : undefined,
-      comment.methods
-        ? // TODO: Document method parameters?
-          h2('Methods', comment.methods.map((m) => h3(m.name, m.description)).join('\n\n'))
-        : undefined,
-    ]
-
-    markdown = sections.filter(Boolean).join('\n\n')
-  } else {
-    throw new Error(`Unknown comment type: ${(comment as any).type}`)
-  }
-
-  await fs.writeFile(path, markdown)
+function getClassMarkdown(comment: ClassComment): string {
+  return [
+    `---\ntitle: ${comment.name}\n---`,
+    h1(comment.name),
+    h2('Summary', comment.description),
+    comment.example ? h2('Example', comment.example) : undefined,
+    comment.constructor
+      ? h2(
+          'Constructor',
+          [
+            comment.constructor.description,
+            ...comment.constructor.parameters.map((p) => h3(p.name, p.description)),
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
+        )
+      : undefined,
+    comment.properties
+      ? h2('Properties', comment.properties.map((p) => h3(p.name, p.description)).join('\n\n'))
+      : undefined,
+    comment.methods
+      ? h2(
+          'Methods',
+          comment.methods
+            .map((m) =>
+              [
+                h3(m.name, m.description),
+                ...m.parameters.map((p) => h4(p.name, p.description)),
+              ].join('\n\n'),
+            )
+            .join('\n\n'),
+        )
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 /***** Utils *****/
@@ -462,6 +511,10 @@ function log(...args: unknown[]) {
 
 function warn(...args: unknown[]) {
   console.warn('⚠️', ...args)
+}
+
+function unimplemented(...args: unknown[]) {
+  console.error('‼️', 'Unimplemented:', ...args)
 }
 
 function invariant(condition: unknown, message?: string): asserts condition {
