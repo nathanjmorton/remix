@@ -3,17 +3,17 @@ import path from 'node:path'
 import util from 'node:util'
 import * as typedoc from 'typedoc'
 import packageJson from '../packages/remix/package.json' with { type: 'json' }
+import * as prettier from 'prettier'
 
 // TODO:
 // - Handle embedded {@link} tags for cross-linking
-// - Display method parameter types
-// - Try to generate type signatures for functions?
 // - Handle preferring exports from remix package versus others
 
 /***** Types *****/
 
 type Parameter = {
   name: string
+  type: string
   description: string
 }
 
@@ -24,6 +24,7 @@ type Property = {
 
 type Method = {
   name: string
+  signature: string
   description: string
   parameters: Parameter[]
   returns: string | undefined
@@ -143,8 +144,6 @@ async function loadTypedocJson(): Promise<typedoc.ProjectReflection> {
 
 // Walk the TypeDoc reflection and generate a serries of lookup maps we'll use
 // for our markdown documentation generation
-// TODO: Eventually it would be nice to only return commentMap from this but
-// lets see how it shakes out with all the rest
 function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
   let apiMap = new Map<string, typedoc.Reflection>()
   let apisToComment = new Set<string>()
@@ -343,8 +342,18 @@ function getMethod(node: typedoc.SignatureReflection): Method | undefined {
   }
 
   let returns = node.comment?.getTag('@returns')?.content
+
+  let returnType = node.type ? node.type.toString() : 'void'
+  let signatureParams = parameters.map((p) => `${p.name}: ${p.type}`).join(', ')
+  let signature = `${node.name}(${signatureParams}): ${returnType}`
+
+  if (node.parent.kind === typedoc.ReflectionKind.Function) {
+    signature = `function ${signature}`
+  }
+
   return {
     name: node.name,
+    signature,
     description: combineCommentParts(node.comment?.summary) || '',
     parameters,
     returns: returns ? combineCommentParts(returns) : undefined,
@@ -416,17 +425,13 @@ function getParameter(
   invariant(node, 'Invalid node for comment')
   return {
     name: [...prefix, node.name].join('.'),
+    type: node.type ? node.type.toString() : 'unknown',
     description: combineCommentParts(node.comment?.summary) ?? '',
   }
 }
 
 function combineCommentParts(parts: typedoc.CommentDisplayPart[] | undefined): string | undefined {
   return parts?.reduce((acc, part) => acc + part.text, '') ?? undefined
-}
-
-function resolveLinkTags(content: string): string {
-  // TODO:
-  return content
 }
 
 /***** Markdown Generation ****/
@@ -437,9 +442,9 @@ async function writeMarkdownFiles(comments: Comment[]) {
     await fs.mkdir(path.dirname(mdPath), { recursive: true })
     log('✅ Writing markdown file:', mdPath)
     if (comment.type === 'function') {
-      await fs.writeFile(mdPath, getFunctionMarkdown(comment))
+      await fs.writeFile(mdPath, await getFunctionMarkdown(comment))
     } else if (comment.type === 'class') {
-      await fs.writeFile(mdPath, getClassMarkdown(comment))
+      await fs.writeFile(mdPath, await getClassMarkdown(comment))
     }
   }
 }
@@ -450,21 +455,43 @@ const h1 = (heading: string) => h(1, heading)
 const h2 = (heading: string, body: string) => h(2, heading, body)
 const h3 = (heading: string, body: string) => h(3, heading, body)
 const h4 = (heading: string, body: string) => h(4, heading, body)
+const code = (content: string) => `\`${content}\``
+const pre = async (content: string, lang = 'ts') => {
+  try {
+    content = await prettier.format(content, { parser: 'typescript' })
+  } catch (e) {
+    warn(
+      'Failed to format code block, using unformatted content: ',
+      content.length > 30 ? content.substring(0, 30) + '...' : content,
+    )
+    warn(e)
+  }
+  return `\`\`\`${lang}\n${content}\n\`\`\``
+}
 
-function getFunctionMarkdown(comment: FunctionComment): string {
+async function getFunctionMarkdown(comment: FunctionComment): Promise<string> {
   return [
     `---\ntitle: ${comment.name}\n---`,
     h1(comment.name),
     h2('Summary', comment.description),
-    comment.example ? h2('Example', comment.example) : undefined,
-    h2('Params', comment.parameters.map((param) => h3(param.name, param.description)).join('\n\n')),
+    h2('Signature', await pre(comment.signature)),
+    comment.example
+      ? h2(
+          'Example',
+          comment.example.trim().startsWith('```') ? comment.example : await pre(comment.example),
+        )
+      : undefined,
+    h2(
+      'Params',
+      comment.parameters.map((param) => h3(code(param.name), param.description)).join('\n\n'),
+    ),
     comment.returns ? h2('Returns', comment.returns) : undefined,
   ]
     .filter(Boolean)
     .join('\n\n')
 }
 
-function getClassMarkdown(comment: ClassComment): string {
+async function getClassMarkdown(comment: ClassComment): Promise<string> {
   return [
     `---\ntitle: ${comment.name}\n---`,
     h1(comment.name),
@@ -475,14 +502,17 @@ function getClassMarkdown(comment: ClassComment): string {
           'Constructor',
           [
             comment.constructor.description,
-            ...comment.constructor.parameters.map((p) => h3(p.name, p.description)),
+            ...comment.constructor.parameters.map((p) => h3(code(p.name), p.description)),
           ]
             .filter(Boolean)
             .join('\n\n'),
         )
       : undefined,
     comment.properties
-      ? h2('Properties', comment.properties.map((p) => h3(p.name, p.description)).join('\n\n'))
+      ? h2(
+          'Properties',
+          comment.properties.map((p) => h3(code(p.name), p.description)).join('\n\n'),
+        )
       : undefined,
     comment.methods
       ? h2(
@@ -490,7 +520,7 @@ function getClassMarkdown(comment: ClassComment): string {
           comment.methods
             .map((m) =>
               [
-                h3(m.name, m.description),
+                h3(code(m.signature), m.description),
                 ...m.parameters.map((p) => h4(p.name, p.description)),
               ].join('\n\n'),
             )

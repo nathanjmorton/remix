@@ -74,7 +74,11 @@ function buildNavigation(currentPath: string): string {
 
   let navItems: string[] = []
 
-  for (let [packageName, files] of Array.from(packageGroups.entries()).sort()) {
+  for (let [packageName, files] of Array.from(packageGroups.entries()).sort((a, b) => {
+    if (a[0] === 'remix') return -1
+    if (b[0] === 'remix') return 1
+    return a[0].localeCompare(b[0])
+  })) {
     let fileLinks = files
       .map((file) => {
         let isActive = currentPath === file.urlPath
