@@ -6,7 +6,6 @@ import packageJson from '../packages/remix/package.json' with { type: 'json' }
 import * as prettier from 'prettier'
 
 // TODO:
-// - Handle embedded {@link} tags for cross-linking
 // - Handle preferring exports from remix package versus others
 
 /***** Types *****/
@@ -85,6 +84,12 @@ let { values: cliArgs } = util.parseArgs({
       type: 'string',
       short: 'o',
       default: 'docs/typedoc',
+    },
+    // Output directory for typedoc JSON (if --input is not specified)
+    websiteDocsPath: {
+      type: 'string',
+      short: 'w',
+      default: '/docs',
     },
   },
 })
@@ -435,7 +440,20 @@ function getParameterOrProperty(
 }
 
 function processComment(parts: typedoc.CommentDisplayPart[]): string {
-  return parts.reduce((acc, part) => acc + part.text, '')
+  return parts.reduce((acc, part) => {
+    let text = part.text
+    if (part.kind === 'inline-tag' && part.tag === '@link') {
+      let target = part.target
+      invariant(
+        target && target instanceof typedoc.Reflection,
+        `Missing/invalid target for @link content: ${part.text}`,
+      )
+      let path = getDocumentedApiPath(target).replace(/\.md$/, '')
+      let href = `${cliArgs.websiteDocsPath}/${path}`
+      text = `[\`${part.text}\`](${href})`
+    }
+    return acc + text
+  }, '')
 }
 
 /***** Markdown Generation ****/

@@ -247,11 +247,11 @@ export class Cookie {
 }
 
 /**
- * Creates a new cookie object.
+ * Creates a new {@link Cookie} instance.
  *
  * @param name The name of the cookie
  * @param options Options for the cookie
- * @returns A new `Cookie` object
+ * @returns A new {@link Cookie} instance
  */
 export function createCookie(name: string, options?: CookieOptions): Cookie {
   return new Cookie(name, options)
