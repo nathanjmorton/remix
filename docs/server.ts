@@ -43,7 +43,8 @@ async function discoverMarkdownFiles(): Promise<DocFile[]> {
         walk(fullPath)
       } else if (entry.isFile() && entry.name.endsWith('.md')) {
         let relativePath = path.relative(DOCS_DIR, fullPath)
-        let packageName = pkgMap[relativePath.split(path.sep)[0]]
+        let parts = relativePath.split(path.sep)
+        let packageName = parts.slice(0, parts.length - 1).join('/')
         let urlPath = '/docs/' + relativePath.replace(/\.md$/, '').replace(/\\/g, '/')
 
         files.push({
@@ -74,11 +75,21 @@ function buildNavigation(currentPath: string): string {
 
   let navItems: string[] = []
 
-  for (let [packageName, files] of Array.from(packageGroups.entries()).sort((a, b) => {
-    if (a[0] === 'remix') return -1
-    if (b[0] === 'remix') return 1
+  let comparator = (a, b) => {
+    // remix above remix/*
+    if (a[0] === 'remix' && b[0].startsWith('remix/')) return -1
+    if (b[0] === 'remix' && a[0].startsWith('remix/')) return 1
+    // remix/* alphabetical
+    if (a[0].startsWith('remix/') && b[0].startsWith('remix/')) return a[0].localeCompare(b[0])
+    // remix and remix/* above all others
+    if (a[0] === 'remix' || a[0].startsWith('remix/')) return -1
+    if (b[0] === 'remix' || b[0].startsWith('remix/')) return 1
+    // Everything else alphabetical
     return a[0].localeCompare(b[0])
-  })) {
+  }
+  let sortedNavItems = Array.from(packageGroups.entries()).sort(comparator)
+
+  for (let [packageName, files] of sortedNavItems) {
     let fileLinks = files
       .map((file) => {
         let isActive = currentPath === file.urlPath

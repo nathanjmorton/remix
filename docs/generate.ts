@@ -6,9 +6,10 @@ import packageJson from '../packages/remix/package.json' with { type: 'json' }
 import * as prettier from 'prettier'
 
 // TODO:
-// - Handle preferring exports from remix package versus others
+// - Handle sub-modules: `import { createCookie } from 'remix/cookie'`
+// - Handle alias re-exports: `export { openFile as getFile } `
 
-/***** Types *****/
+//#region Types
 
 // Function parameter or Class property
 type ParameterOrProperty = {
@@ -51,10 +52,10 @@ type DocumentedAPI = DocumentedFunction | DocumentedClass
 
 type Maps = {
   comments: Map<string, typedoc.Reflection> // full name => TypeDoc Reflection
-  apisToDocument: Set<string> // APIS we should generate docs for
+  apisToDocument: Set<string> // APIs we should generate docs for
 }
 
-/***** CLI *****/
+//#region CLI
 
 let { values: cliArgs } = util.parseArgs({
   options: {
@@ -102,6 +103,9 @@ async function main() {
   let project = await loadTypedocJson()
   let { comments, apisToDocument } = createLookupMaps(project)
 
+  // Prefer `remix` package exports over other package exports
+  getDuplicateAPIS(apisToDocument).forEach((dup) => apisToDocument.delete(dup))
+
   // Parse JSDocs into DocumentedAPI instances we can write out to markdown
   let documentedAPIs = [...apisToDocument].map((name) => getDocumentedAPI(comments.get(name)!))
 
@@ -109,7 +113,7 @@ async function main() {
   await writeMarkdownFiles(documentedAPIs)
 }
 
-/***** TypeDoc *****/
+//#region TypeDoc Loading
 
 // Load the TypeDoc JSON representation, either from a JSON file or by running
 // TypeDoc against the project
@@ -222,6 +226,43 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
     })
   }
 }
+
+// Deduplicate APIs that are exported from multiple packages, preferring the remix package
+function getDuplicateAPIS(apisToDocument: Set<string>): Set<string> {
+  let apisByName = new Map<string, string[]>()
+  let duplicates = new Set<string>()
+
+  // Group APIs by short name
+  for (let fullName of apisToDocument) {
+    let apiName = fullName.split('.').slice(0, -1)[0]
+    apisByName.set(apiName, [...(apisByName.get(apiName) || []), fullName])
+  }
+
+  // Process each group of APIs with the same name
+  for (let [apiName, fullNames] of apisByName) {
+    if (fullNames.length <= 1) {
+      continue
+    }
+
+    let remixAPI = fullNames.find((name) => name.split('.')[0] === 'remix')
+    let nonRemixAPIs = fullNames.filter((name) => name.split('.')[0] !== 'remix')
+
+    if (remixAPI && nonRemixAPIs.length > 0) {
+      // Remove non-remix APIs, keep the remix one
+      for (let api of nonRemixAPIs) {
+        log(`Preferring remix export for ${apiName}, removing: ${api}`)
+        duplicates.add(api)
+      }
+    } else if (!remixAPI && fullNames.length > 1) {
+      // Multiple non-remix packages export this API
+      warn(`Multiple packages export ${apiName} but none is remix: ${fullNames.join(', ')}`)
+    }
+  }
+
+  return duplicates
+}
+
+//#region DocumentedAPI
 
 // Convert a typedoc reflection for a given node into a documentable instance
 function getDocumentedAPI(node: typedoc.Reflection): DocumentedAPI {
@@ -456,7 +497,7 @@ function processComment(parts: typedoc.CommentDisplayPart[]): string {
   }, '')
 }
 
-/***** Markdown Generation ****/
+//#region Markdown
 
 async function writeMarkdownFiles(comments: DocumentedAPI[]) {
   for (let comment of comments) {
@@ -554,7 +595,7 @@ async function getClassMarkdown(comment: DocumentedClass): Promise<string> {
     .join('\n\n')
 }
 
-/***** Utils *****/
+//#region utils
 
 function log(...args: unknown[]) {
   console.log(...args)
@@ -574,7 +615,7 @@ function invariant(condition: unknown, message?: string): asserts condition {
   }
 }
 
-/***** Reference ****/
+//#region Reference
 
 // export declare enum ReflectionKind {
 //     Project = 1,
