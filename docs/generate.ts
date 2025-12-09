@@ -27,6 +27,7 @@ type Method = {
 type DocumentedFunction = Method & {
   type: 'function'
   path: string
+  source: string | undefined
   aliases: string[] | undefined
   example: string | undefined
 }
@@ -35,6 +36,7 @@ type DocumentedFunction = Method & {
 type DocumentedClass = {
   type: 'class'
   path: string
+  source: string | undefined
   name: string
   aliases: string[] | undefined
   description: string
@@ -114,7 +116,7 @@ async function main() {
   await writeMarkdownFiles(documentedAPIs)
 }
 
-//#region TypeDoc Loading
+//#region TypeDoc
 
 // Load the TypeDoc JSON representation, either from a JSON file or by running
 // TypeDoc against the project
@@ -322,6 +324,7 @@ function getDocumentedFunction(
   return {
     type: 'function',
     path: getDocumentedApiPath(fullName),
+    source: node.sources?.[0]?.url,
     aliases: getDocumentedApiAliases(node.comment!),
     example: node.comment?.getTag('@example')?.content
       ? processComment(node.comment.getTag('@example')!.content)
@@ -376,6 +379,7 @@ function getDocumentedClass(
     aliases: getDocumentedApiAliases(node.comment!),
     example: undefined,
     path: getDocumentedApiPath(fullName),
+    source: node.sources?.[0]?.url,
     name: getApiNameFromFullName(fullName),
     description: getDocumentedApiDescription(node.comment!),
     constructor,
@@ -573,6 +577,7 @@ const h2 = (heading: string, body: string) => h(2, heading, body)
 const h3 = (heading: string, body: string) => h(3, heading, body)
 const h4 = (heading: string, body: string) => h(4, heading, body)
 const code = (content: string) => `\`${content}\``
+const p = (content: string) => `${content}`
 const pre = async (content: string, lang = 'ts') => {
   try {
     content = await prettier.format(content, { parser: 'typescript' })
@@ -649,6 +654,7 @@ function getCommonMarkdown(comment: DocumentedFunction | DocumentedClass): (stri
   return [
     `---\ntitle: ${comment.name}\n---`,
     h1(comment.name),
+    comment.source ? p(`[View Source](${comment.source})`) : undefined,
     h2('Summary', comment.description),
     comment.aliases ? h2('Aliases', comment.aliases.join(', ')) : undefined,
   ].filter(Boolean)
