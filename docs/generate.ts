@@ -5,10 +5,6 @@ import * as typedoc from 'typedoc'
 import packageJson from '../packages/remix/package.json' with { type: 'json' }
 import * as prettier from 'prettier'
 
-// TODO:
-// - Handle sub-modules: `import { createCookie } from 'remix/cookie'`
-// - Handle alias re-exports: `export { openFile as getFile } `
-
 //#region Types
 
 // Function parameter or Class property
@@ -104,10 +100,15 @@ async function main() {
   let { comments, apisToDocument } = createLookupMaps(project)
 
   // Prefer `remix` package exports over other package exports
-  getDuplicateAPIS(apisToDocument).forEach((dup) => apisToDocument.delete(dup))
+  getDuplicateAPIs(apisToDocument).forEach((name) => apisToDocument.delete(name))
+
+  // Remove aliased APIs and only document the canonicals
+  getAliasedAPIs(comments).forEach((name) => apisToDocument.delete(name))
 
   // Parse JSDocs into DocumentedAPI instances we can write out to markdown
-  let documentedAPIs = [...apisToDocument].map((name) => getDocumentedAPI(comments.get(name)!))
+  let documentedAPIs = [...apisToDocument].map((name) =>
+    getDocumentedAPI(name, comments.get(name)!),
+  )
 
   // Write out docs
   await writeMarkdownFiles(documentedAPIs)
@@ -135,6 +136,9 @@ async function loadTypedocJson(): Promise<typedoc.ProjectReflection> {
     name: packageJson.name,
     entryPoints: ['./packages/*'],
     entryPointStrategy: 'packages',
+    packageOptions: {
+      blockTags: [...typedoc.OptionDefaults.blockTags, '@alias'],
+    },
   })
   let reflection = await app.convert()
   invariant(reflection, 'Failed to generate TypeDoc reflection from source code')
@@ -155,7 +159,6 @@ async function loadTypedocJson(): Promise<typedoc.ProjectReflection> {
 function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
   let comments = new Map<string, typedoc.Reflection>()
   let apisToDocument = new Set<string>()
-  let referenceTargetMap = new Map<string, number>()
 
   // Reflections we want to traverse through to find documented APIs
   let traverseKinds = new Set<typedoc.ReflectionKind>([
@@ -172,7 +175,7 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
 
   return { comments, apisToDocument }
 
-  function recurse(node: typedoc.Reflection) {
+  function recurse(node: typedoc.Reflection, alias?: string) {
     node.traverse((child) => {
       if (
         cliArgs.module &&
@@ -183,27 +186,25 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
         return
       }
 
-      comments.set(child.getFriendlyFullName(), child)
+      let apiName = alias || child.getFriendlyFullName()
+      comments.set(apiName, child)
 
-      let indent = '  '.repeat(child.getFriendlyFullName().split('.').length - 1)
+      let indent = '  '.repeat(apiName.split('.').length - 1)
       let logApi = (suffix: string) =>
         log(
           [
             `${indent}[${typedoc.ReflectionKind[child.kind]}]`,
-            child.getFriendlyFullName(),
+            apiName,
             `(${child.id})`,
             `(${suffix})`,
           ].join(' '),
         )
 
       // Reference types are aliases - stick them off into a separate map for post-processing
-      if (
-        child.kind === typedoc.ReflectionKind.Reference &&
-        '_target' in child &&
-        typeof child._target === 'number'
-      ) {
-        logApi(`reference to ${child._target}`)
-        referenceTargetMap.set(child.getFriendlyFullName(), child._target)
+      if (child.isReference()) {
+        logApi(`reference to ${child.getTargetReflectionDeep().getFriendlyFullName()}`)
+        let ref = child.getTargetReflection()
+        recurse(ref, child.getFriendlyFullName())
         return
       }
 
@@ -215,7 +216,7 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
 
       // Grab APIs with JSDoc comments that we should generate docs for
       if (child.comment && (!cliArgs.api || child.name === cliArgs.api)) {
-        apisToDocument.add(child.getFriendlyFullName())
+        apisToDocument.add(apiName)
         logApi(`commenting`)
       }
 
@@ -228,13 +229,13 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
 }
 
 // Deduplicate APIs that are exported from multiple packages, preferring the remix package
-function getDuplicateAPIS(apisToDocument: Set<string>): Set<string> {
+function getDuplicateAPIs(apisToDocument: Set<string>): Set<string> {
   let apisByName = new Map<string, string[]>()
   let duplicates = new Set<string>()
 
   // Group APIs by short name
   for (let fullName of apisToDocument) {
-    let apiName = fullName.split('.').slice(0, -1)[0]
+    let apiName = getApiNameFromFullName(fullName)
     apisByName.set(apiName, [...(apisByName.get(apiName) || []), fullName])
   }
 
@@ -255,24 +256,50 @@ function getDuplicateAPIS(apisToDocument: Set<string>): Set<string> {
       }
     } else if (!remixAPI && fullNames.length > 1) {
       // Multiple non-remix packages export this API
-      warn(`Multiple packages export ${apiName} but none is remix: ${fullNames.join(', ')}`)
+      warn(`Multiple packages export ${apiName}: ${fullNames.join(', ')}`)
     }
   }
 
   return duplicates
 }
 
+function getAliasedAPIs(comments: Map<string, typedoc.Reflection>): Set<string> {
+  let aliasedAPIs = new Set<string>()
+
+  comments.forEach((reflection, name) => {
+    let parts = name.split('.')
+    let apiName = parts.pop()
+    let alias = reflection.comment?.blockTags.find((tag) => tag.tag === '@alias')
+    if (alias) {
+      // The canonical API should include `@alias`
+      // We will generate a markdown doc for the canonical API, and not the aliases
+      // The canonical doc will list the aliases names
+      let aliasName = alias.content.reduce((acc, part) => {
+        invariant(part.kind === 'text')
+        return acc + part.text
+      }, '')
+      if (apiName !== aliasName) {
+        let aliasFullName = [...parts, aliasName].join('.')
+        log(`Preferring canonical API \`${name}\` over alias \`${aliasFullName}\``)
+        aliasedAPIs.add(aliasFullName)
+      }
+    }
+  })
+
+  return aliasedAPIs
+}
+
 //#region DocumentedAPI
 
 // Convert a typedoc reflection for a given node into a documentable instance
-function getDocumentedAPI(node: typedoc.Reflection): DocumentedAPI {
+function getDocumentedAPI(fullName: string, node: typedoc.Reflection): DocumentedAPI {
   try {
     if (node.isSignature()) {
-      return getDocumentedFunction(node)
+      return getDocumentedFunction(fullName, node)
     }
 
     if (node.isDeclaration() && node.kind === typedoc.ReflectionKind.Class) {
-      return getDocumentedClass(node)
+      return getDocumentedClass(fullName, node)
     }
 
     throw new Error(`Unsupported documented API kind: ${typedoc.ReflectionKind[node.kind]}`)
@@ -286,13 +313,16 @@ function getDocumentedAPI(node: typedoc.Reflection): DocumentedAPI {
   }
 }
 
-function getDocumentedFunction(node: typedoc.SignatureReflection): DocumentedFunction {
-  let method = getMethod(node)
+function getDocumentedFunction(
+  fullName: string,
+  node: typedoc.SignatureReflection,
+): DocumentedFunction {
+  let method = getMethod(fullName, node)
   invariant(method, `Failed to get method for function: ${node.getFriendlyFullName()}`)
   return {
     type: 'function',
-    path: getDocumentedApiPath(node),
-    aliases: undefined,
+    path: getDocumentedApiPath(fullName),
+    aliases: getDocumentedApiAliases(node.comment!),
     example: node.comment?.getTag('@example')?.content
       ? processComment(node.comment.getTag('@example')!.content)
       : undefined,
@@ -300,7 +330,10 @@ function getDocumentedFunction(node: typedoc.SignatureReflection): DocumentedFun
   } satisfies DocumentedFunction
 }
 
-function getDocumentedClass(node: typedoc.DeclarationReflection): DocumentedClass {
+function getDocumentedClass(
+  fullName: string,
+  node: typedoc.DeclarationReflection,
+): DocumentedClass {
   let constructor: Method | undefined
   let properties: ParameterOrProperty[] = []
   let methods: Method[] = []
@@ -312,7 +345,7 @@ function getDocumentedClass(node: typedoc.DeclarationReflection): DocumentedClas
           signature,
           `Missing constructor signature for class: ${node.getFriendlyFullName()}`,
         )
-        constructor = getMethod(signature)
+        constructor = getMethod(fullName, signature)
       } else if (child.kind === typedoc.ReflectionKind.Property) {
         let property = getParameterOrProperty(child)
         if (property) {
@@ -326,7 +359,7 @@ function getDocumentedClass(node: typedoc.DeclarationReflection): DocumentedClas
       } else if (child.kind === typedoc.ReflectionKind.Method) {
         let signature = child.getAllSignatures()[0]
         invariant(`Missing method signature for class: ${child.getFriendlyFullName()}`)
-        let method = getMethod(signature)
+        let method = getMethod(fullName, signature)
         if (method) {
           methods.push(method)
         }
@@ -340,10 +373,10 @@ function getDocumentedClass(node: typedoc.DeclarationReflection): DocumentedClas
 
   return {
     type: 'class',
-    aliases: undefined,
+    aliases: getDocumentedApiAliases(node.comment!),
     example: undefined,
-    path: getDocumentedApiPath(node),
-    name: node.name,
+    path: getDocumentedApiPath(fullName),
+    name: getApiNameFromFullName(fullName),
     description: getDocumentedApiDescription(node.comment!),
     constructor,
     properties,
@@ -351,8 +384,24 @@ function getDocumentedClass(node: typedoc.DeclarationReflection): DocumentedClas
   }
 }
 
-function getDocumentedApiPath(node: typedoc.Reflection): string {
-  let nameParts = node.getFriendlyFullName().split('.')
+function getDocumentedApiAliases(typedocComment: typedoc.Comment): string[] | undefined {
+  let tags = typedocComment.getTags('@alias')
+  if (!tags || tags.length === 0) {
+    return undefined
+  }
+  return tags.map((tag) => {
+    return tag.content.reduce((acc, part) => {
+      invariant(
+        part.kind === 'text',
+        `Invalid @alias tag content: ${typedocComment.getTags('@alias').join(', ')}`,
+      )
+      return acc + part.text
+    }, '')
+  })
+}
+
+function getDocumentedApiPath(fullName: string): string {
+  let nameParts = fullName.split('.')
   return (
     nameParts
       .map((s) => s.replace(/^@remix-run\//g, ''))
@@ -369,7 +418,7 @@ function getDocumentedApiDescription(typedocComment: typedoc.Comment): string {
   return description
 }
 
-function getMethod(node: typedoc.SignatureReflection): Method | undefined {
+function getMethod(fullName: string, node: typedoc.SignatureReflection): Method | undefined {
   let parameters: ParameterOrProperty[] = []
   node.traverse((child) => {
     // Only process params, not type params (generics)
@@ -400,7 +449,7 @@ function getMethod(node: typedoc.SignatureReflection): Method | undefined {
   }
 
   return {
-    name: node.name,
+    name: getApiNameFromFullName(fullName),
     signature,
     description: node.comment?.summary ? processComment(node.comment.summary) : '',
     parameters,
@@ -489,7 +538,7 @@ function processComment(parts: typedoc.CommentDisplayPart[]): string {
         target && target instanceof typedoc.Reflection,
         `Missing/invalid target for @link content: ${part.text}`,
       )
-      let path = getDocumentedApiPath(target).replace(/\.md$/, '')
+      let path = getDocumentedApiPath(target.getFriendlyFullName()).replace(/\.md$/, '')
       let href = `${cliArgs.websiteDocsPath}/${path}`
       text = `[\`${part.text}\`](${href})`
     }
@@ -497,6 +546,11 @@ function processComment(parts: typedoc.CommentDisplayPart[]): string {
   }, '')
 }
 
+function getApiNameFromFullName(fullName: string): string {
+  return fullName.split('.').slice(-1)[0]
+}
+
+//#endregion
 //#region Markdown
 
 async function writeMarkdownFiles(comments: DocumentedAPI[]) {
@@ -534,9 +588,7 @@ const pre = async (content: string, lang = 'ts') => {
 
 async function getFunctionMarkdown(comment: DocumentedFunction): Promise<string> {
   return [
-    `---\ntitle: ${comment.name}\n---`,
-    h1(comment.name),
-    h2('Summary', comment.description),
+    ...getCommonMarkdown(comment),
     h2('Signature', await pre(comment.signature)),
     comment.example
       ? h2(
@@ -556,9 +608,7 @@ async function getFunctionMarkdown(comment: DocumentedFunction): Promise<string>
 
 async function getClassMarkdown(comment: DocumentedClass): Promise<string> {
   return [
-    `---\ntitle: ${comment.name}\n---`,
-    h1(comment.name),
-    h2('Summary', comment.description),
+    ...getCommonMarkdown(comment),
     comment.example ? h2('Example', comment.example) : undefined,
     comment.constructor
       ? h2(
@@ -593,6 +643,15 @@ async function getClassMarkdown(comment: DocumentedClass): Promise<string> {
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function getCommonMarkdown(comment: DocumentedFunction | DocumentedClass): (string | undefined)[] {
+  return [
+    `---\ntitle: ${comment.name}\n---`,
+    h1(comment.name),
+    h2('Summary', comment.description),
+    comment.aliases ? h2('Aliases', comment.aliases.join(', ')) : undefined,
+  ].filter(Boolean)
 }
 
 //#region utils
