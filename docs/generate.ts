@@ -46,7 +46,19 @@ type DocumentedClass = {
   methods: Method[] | undefined
 }
 
-type DocumentedAPI = DocumentedFunction | DocumentedClass
+// Documented interface API
+type DocumentedInterface = {
+  type: 'interface'
+  path: string
+  source: string | undefined
+  name: string
+  aliases: string[] | undefined
+  description: string
+  properties: ParameterOrProperty[] | undefined
+  methods: Method[] | undefined
+}
+
+type DocumentedAPI = DocumentedFunction | DocumentedClass | DocumentedInterface
 
 type Maps = {
   comments: Map<string, typedoc.Reflection> // full name => TypeDoc Reflection
@@ -168,6 +180,7 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
     typedoc.ReflectionKind.Function,
     typedoc.ReflectionKind.CallSignature,
     typedoc.ReflectionKind.Class,
+    typedoc.ReflectionKind.Interface,
     // TODO: Not implemented yet - used for interactions like arrowLeft etc. so
     // we eventually will probably want to support
     // typedoc.ReflectionKind.Variable,
@@ -304,6 +317,14 @@ function getDocumentedAPI(fullName: string, node: typedoc.Reflection): Documente
       return getDocumentedClass(fullName, node)
     }
 
+    if (node.isDeclaration() && node.kind === typedoc.ReflectionKind.Interface) {
+      return getDocumentedInterface(fullName, node)
+    }
+
+    if (node.isDeclaration() && node.kind === typedoc.ReflectionKind.Interface) {
+      return getDocumentedInterface(fullName, node)
+    }
+
     throw new Error(`Unsupported documented API kind: ${typedoc.ReflectionKind[node.kind]}`)
   } catch (e) {
     throw new Error(
@@ -319,18 +340,18 @@ function getDocumentedFunction(
   fullName: string,
   node: typedoc.SignatureReflection,
 ): DocumentedFunction {
-  let method = getMethod(fullName, node)
+  let method = getApiMethod(fullName, node)
   invariant(method, `Failed to get method for function: ${node.getFriendlyFullName()}`)
   return {
     type: 'function',
-    path: getDocumentedApiPath(fullName),
+    path: getApiFilePath(fullName),
     source: node.sources?.[0]?.url,
-    aliases: getDocumentedApiAliases(node.comment!),
+    aliases: getApiAliases(node.comment!),
     example: node.comment?.getTag('@example')?.content
-      ? processComment(node.comment.getTag('@example')!.content)
+      ? processApiComment(node.comment.getTag('@example')!.content)
       : undefined,
     ...method,
-  } satisfies DocumentedFunction
+  }
 }
 
 function getDocumentedClass(
@@ -338,57 +359,52 @@ function getDocumentedClass(
   node: typedoc.DeclarationReflection,
 ): DocumentedClass {
   let constructor: Method | undefined
-  let properties: ParameterOrProperty[] = []
-  let methods: Method[] = []
   node.traverse((child) => {
-    if (child.isDeclaration()) {
-      if (child.kind === typedoc.ReflectionKind.Constructor) {
-        let signature = child.getAllSignatures()[0]
-        invariant(
-          signature,
-          `Missing constructor signature for class: ${node.getFriendlyFullName()}`,
-        )
-        constructor = getMethod(fullName, signature)
-      } else if (child.kind === typedoc.ReflectionKind.Property) {
-        let property = getParameterOrProperty(child)
-        if (property) {
-          properties.push(property)
-        }
-      } else if (child.kind === typedoc.ReflectionKind.Accessor) {
-        let property = getParameterOrProperty(child.getSignature)
-        if (property) {
-          properties.push(property)
-        }
-      } else if (child.kind === typedoc.ReflectionKind.Method) {
-        let signature = child.getAllSignatures()[0]
-        invariant(`Missing method signature for class: ${child.getFriendlyFullName()}`)
-        let method = getMethod(fullName, signature)
-        if (method) {
-          methods.push(method)
-        }
-      } else {
-        unimplemented(
-          `class child kind: ${typedoc.ReflectionKind[child.kind]} ${node.getFriendlyFullName()}`,
-        )
-      }
+    if (child.isDeclaration() && child.kind === typedoc.ReflectionKind.Constructor) {
+      let signature = child.getAllSignatures()[0]
+      invariant(signature, `Missing constructor signature for class: ${node.getFriendlyFullName()}`)
+      constructor = getApiMethod(fullName, signature)
     }
   })
 
+  let { properties, methods } = getApiPropertiesAndMethods(
+    fullName,
+    node,
+    new Set([typedoc.ReflectionKind.Constructor]),
+  )
+
   return {
     type: 'class',
-    aliases: getDocumentedApiAliases(node.comment!),
+    aliases: getApiAliases(node.comment!),
     example: undefined,
-    path: getDocumentedApiPath(fullName),
+    path: getApiFilePath(fullName),
     source: node.sources?.[0]?.url,
     name: getApiNameFromFullName(fullName),
-    description: getDocumentedApiDescription(node.comment!),
+    description: getApiDescription(node.comment!),
     constructor,
     properties,
     methods,
   }
 }
 
-function getDocumentedApiAliases(typedocComment: typedoc.Comment): string[] | undefined {
+function getDocumentedInterface(
+  fullName: string,
+  node: typedoc.DeclarationReflection,
+): DocumentedInterface {
+  let { properties, methods } = getApiPropertiesAndMethods(fullName, node)
+  return {
+    type: 'interface',
+    path: getApiFilePath(fullName),
+    source: node.sources?.[0]?.url,
+    name: getApiNameFromFullName(fullName),
+    aliases: getApiAliases(node.comment!),
+    description: getApiDescription(node.comment!),
+    properties,
+    methods,
+  }
+}
+
+function getApiAliases(typedocComment: typedoc.Comment): string[] | undefined {
   let tags = typedocComment.getTags('@alias')
   if (!tags || tags.length === 0) {
     return undefined
@@ -404,7 +420,7 @@ function getDocumentedApiAliases(typedocComment: typedoc.Comment): string[] | un
   })
 }
 
-function getDocumentedApiPath(fullName: string): string {
+function getApiFilePath(fullName: string): string {
   let nameParts = fullName.split('.')
   return (
     nameParts
@@ -414,7 +430,7 @@ function getDocumentedApiPath(fullName: string): string {
   )
 }
 
-function getDocumentedApiDescription(typedocComment: typedoc.Comment): string {
+function getApiDescription(typedocComment: typedoc.Comment): string {
   let description = typedocComment.summary
     .map((part) => ('text' in part ? part.text : ''))
     .join('')
@@ -422,17 +438,56 @@ function getDocumentedApiDescription(typedocComment: typedoc.Comment): string {
   return description
 }
 
-function getMethod(fullName: string, node: typedoc.SignatureReflection): Method | undefined {
+function getApiPropertiesAndMethods(
+  fullName: string,
+  node: typedoc.DeclarationReflection,
+  handledTypes: Set<typedoc.ReflectionKind> = new Set(),
+): {
+  properties: ParameterOrProperty[]
+  methods: Method[]
+} {
+  let properties: ParameterOrProperty[] = []
+  let methods: Method[] = []
+  node.traverse((child) => {
+    if (child.isDeclaration()) {
+      if (child.kind === typedoc.ReflectionKind.Property) {
+        let property = getApiParameterOrProperty(child)
+        if (property) {
+          properties.push(property)
+        }
+      } else if (child.kind === typedoc.ReflectionKind.Accessor) {
+        let property = getApiParameterOrProperty(child.getSignature)
+        if (property) {
+          properties.push(property)
+        }
+      } else if (child.kind === typedoc.ReflectionKind.Method) {
+        let signature = child.getAllSignatures()[0]
+        invariant(`Missing method signature for class: ${child.getFriendlyFullName()}`)
+        let method = getApiMethod(fullName, signature)
+        if (method) {
+          methods.push(method)
+        }
+      } else if (!handledTypes.has(child.kind)) {
+        unimplemented(
+          `class child kind: ${typedoc.ReflectionKind[child.kind]} ${node.getFriendlyFullName()}`,
+        )
+      }
+    }
+  })
+  return { properties, methods }
+}
+
+function getApiMethod(fullName: string, node: typedoc.SignatureReflection): Method | undefined {
   let parameters: ParameterOrProperty[] = []
   node.traverse((child) => {
     // Only process params, not type params (generics)
     if (child.isParameter()) {
-      parameters = parameters.concat(getParametersOrProperties(child))
+      parameters = parameters.concat(getApiParameters(child))
     } else if (child.isSignature()) {
       child.traverse((param) => {
         // Only process params, not type params (generics)
         if (param.isParameter()) {
-          parameters = parameters.concat(getParametersOrProperties(param))
+          parameters = parameters.concat(getApiParameters(param))
         }
       })
     }
@@ -455,10 +510,10 @@ function getMethod(fullName: string, node: typedoc.SignatureReflection): Method 
   return {
     name: getApiNameFromFullName(fullName),
     signature,
-    description: node.comment?.summary ? processComment(node.comment.summary) : '',
+    description: node.comment?.summary ? processApiComment(node.comment.summary) : '',
     parameters,
     returns: node.comment?.getTag('@returns')?.content
-      ? processComment(node.comment.getTag('@returns')!.content)
+      ? processApiComment(node.comment.getTag('@returns')!.content)
       : undefined,
   }
 }
@@ -466,11 +521,11 @@ function getMethod(fullName: string, node: typedoc.SignatureReflection): Method 
 // Get one or more parameters to document for a single function param.
 // Results in multiple params when the function param is an object with nested
 // fields. For example: `func(options: { a: boolean, b: string })`
-function getParametersOrProperties(
+function getApiParameters(
   node: typedoc.ParameterReflection | typedoc.ReferenceReflection,
 ): ParameterOrProperty[] {
   if (!node.isReference()) {
-    let param = getParameterOrProperty(node)
+    let param = getApiParameterOrProperty(node)
     return param ? [param] : []
   }
 
@@ -483,21 +538,21 @@ function getParametersOrProperties(
   // For now, we assume the class will be documented on it's own and we can just cross-link
   // TODO: Cross-link to the class
   if (api.kind === typedoc.ReflectionKind.Class) {
-    let param = getParameterOrProperty(node)
+    let param = getApiParameterOrProperty(node)
     return param ? [param] : []
   }
 
   // Expand out individual fields of interfaces
   if (api.kind === typedoc.ReflectionKind.Interface) {
     let params: ParameterOrProperty[] = []
-    let param = getParameterOrProperty(node)
+    let param = getApiParameterOrProperty(node)
     if (param) {
       params.push(param)
     }
 
     api.traverse((child) => {
       if (child.isDeclaration()) {
-        let childParam = getParameterOrProperty(child, [node.name])
+        let childParam = getApiParameterOrProperty(child, [node.name])
         if (childParam) {
           params.push(childParam)
         } else {
@@ -510,14 +565,14 @@ function getParametersOrProperties(
   }
 
   if (api.kind === typedoc.ReflectionKind.TypeAlias) {
-    let param = getParameterOrProperty(node)
+    let param = getApiParameterOrProperty(node)
     return param ? [param] : []
   }
 
   throw new Error(`Unhandled parameter kind: ${typedoc.ReflectionKind[api.kind]}`)
 }
 
-function getParameterOrProperty(
+function getApiParameterOrProperty(
   node:
     | typedoc.ParameterReflection
     | typedoc.DeclarationReflection
@@ -529,11 +584,15 @@ function getParameterOrProperty(
   return {
     name: [...prefix, node.name].join('.'),
     type: node.type ? node.type.toString() : 'unknown',
-    description: node.comment?.summary ? processComment(node.comment.summary) : '',
+    description: node.comment?.summary ? processApiComment(node.comment.summary) : '',
   }
 }
 
-function processComment(parts: typedoc.CommentDisplayPart[]): string {
+function getApiNameFromFullName(fullName: string): string {
+  return fullName.split('.').slice(-1)[0]
+}
+
+function processApiComment(parts: typedoc.CommentDisplayPart[]): string {
   return parts.reduce((acc, part) => {
     let text = part.text
     if (part.kind === 'inline-tag' && part.tag === '@link') {
@@ -542,7 +601,7 @@ function processComment(parts: typedoc.CommentDisplayPart[]): string {
         target && target instanceof typedoc.Reflection,
         `Missing/invalid target for @link content: ${part.text}`,
       )
-      let path = getDocumentedApiPath(target.getFriendlyFullName()).replace(/\.md$/, '')
+      let path = getApiFilePath(target.getFriendlyFullName()).replace(/\.md$/, '')
       let href = `${cliArgs.websiteDocsPath}/${path}`
       text = `[\`${part.text}\`](${href})`
     }
@@ -550,11 +609,6 @@ function processComment(parts: typedoc.CommentDisplayPart[]): string {
   }, '')
 }
 
-function getApiNameFromFullName(fullName: string): string {
-  return fullName.split('.').slice(-1)[0]
-}
-
-//#endregion
 //#region Markdown
 
 async function writeMarkdownFiles(comments: DocumentedAPI[]) {
@@ -566,6 +620,8 @@ async function writeMarkdownFiles(comments: DocumentedAPI[]) {
       await fs.writeFile(mdPath, await getFunctionMarkdown(comment))
     } else if (comment.type === 'class') {
       await fs.writeFile(mdPath, await getClassMarkdown(comment))
+    } else if (comment.type === 'interface') {
+      await fs.writeFile(mdPath, await getInterfaceMarkdown(comment))
     }
   }
 }
@@ -601,10 +657,12 @@ async function getFunctionMarkdown(comment: DocumentedFunction): Promise<string>
           comment.example.trim().startsWith('```') ? comment.example : await pre(comment.example),
         )
       : undefined,
-    h2(
-      'Params',
-      comment.parameters.map((param) => h3(code(param.name), param.description)).join('\n\n'),
-    ),
+    comment.parameters.length > 0
+      ? h2(
+          'Params',
+          comment.parameters.map((param) => h3(code(param.name), param.description)).join('\n\n'),
+        )
+      : undefined,
     comment.returns ? h2('Returns', comment.returns) : undefined,
   ]
     .filter(Boolean)
@@ -626,13 +684,13 @@ async function getClassMarkdown(comment: DocumentedClass): Promise<string> {
             .join('\n\n'),
         )
       : undefined,
-    comment.properties
+    comment.properties && comment.properties.length > 0
       ? h2(
           'Properties',
           comment.properties.map((p) => h3(code(p.name), p.description)).join('\n\n'),
         )
       : undefined,
-    comment.methods
+    comment.methods && comment.methods.length > 0
       ? h2(
           'Methods',
           comment.methods
@@ -650,9 +708,36 @@ async function getClassMarkdown(comment: DocumentedClass): Promise<string> {
     .join('\n\n')
 }
 
-function getCommonMarkdown(comment: DocumentedFunction | DocumentedClass): (string | undefined)[] {
+async function getInterfaceMarkdown(comment: DocumentedInterface): Promise<string> {
   return [
-    `---\ntitle: ${comment.name}\n---`,
+    ...getCommonMarkdown(comment),
+    comment.properties && comment.properties.length > 0
+      ? h2(
+          'Properties',
+          comment.properties.map((p) => h3(code(p.name), p.description)).join('\n\n'),
+        )
+      : undefined,
+    comment.methods && comment.methods.length > 0
+      ? h2(
+          'Methods',
+          comment.methods
+            .map((m) =>
+              [
+                h3(code(m.signature), m.description),
+                ...m.parameters.map((p) => h4(p.name, p.description)),
+              ].join('\n\n'),
+            )
+            .join('\n\n'),
+        )
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function getCommonMarkdown(comment: DocumentedAPI): (string | undefined)[] {
+  return [
+    ['---', `title: ${comment.name}`, `type: ${comment.type}`, '---'].join('\n'),
     h1(comment.name),
     comment.source ? p(`[View Source](${comment.source})`) : undefined,
     h2('Summary', comment.description),

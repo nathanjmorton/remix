@@ -6,12 +6,14 @@ import { createRouter, route } from '@remix-run/fetch-router'
 import { createHtmlResponse } from '@remix-run/response/html'
 import { staticFiles } from '@remix-run/static-middleware'
 import { html } from '@remix-run/html-template'
+import * as frontmatter from 'front-matter'
 import { marked } from 'marked'
 
 let DOCS_DIR = path.resolve(process.cwd(), 'docs/api')
 
 interface DocFile {
   path: string
+  type: string
   name: string
   package: string
   urlPath: string
@@ -47,8 +49,13 @@ async function discoverMarkdownFiles(): Promise<DocFile[]> {
         let packageName = parts.slice(0, parts.length - 1).join('/')
         let urlPath = '/docs/' + relativePath.replace(/\.md$/, '').replace(/\\/g, '/')
 
+        let markdown = fs.readFileSync(fullPath, 'utf-8')
+        // @ts-expect-error No types
+        let { attributes } = frontmatter.default(markdown)
+
         files.push({
           path: fullPath,
+          type: attributes.type || 'unknown',
           name: entry.name.replace(/\.md$/, ''),
           package: packageName,
           urlPath: urlPath,
@@ -96,7 +103,7 @@ function buildNavigation(currentPath: string): string {
         return `
           <li>
             <a href="${file.urlPath}" class="${isActive ? 'active' : ''}">
-              ${file.name}
+              ${file.name} (${file.type})
             </a>
           </li>
         `
