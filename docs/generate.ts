@@ -58,7 +58,18 @@ type DocumentedInterface = {
   methods: Method[] | undefined
 }
 
-type DocumentedAPI = DocumentedFunction | DocumentedClass | DocumentedInterface
+// Documented interface API
+type DocumentedType = {
+  type: 'type'
+  path: string
+  source: string | undefined
+  name: string
+  aliases: string[] | undefined
+  description: string
+  signature: string
+}
+
+type DocumentedAPI = DocumentedFunction | DocumentedClass | DocumentedInterface | DocumentedType
 
 type Maps = {
   comments: Map<string, typedoc.Reflection> // full name => TypeDoc Reflection
@@ -181,6 +192,7 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
     typedoc.ReflectionKind.CallSignature,
     typedoc.ReflectionKind.Class,
     typedoc.ReflectionKind.Interface,
+    typedoc.ReflectionKind.TypeAlias,
     // TODO: Not implemented yet - used for interactions like arrowLeft etc. so
     // we eventually will probably want to support
     // typedoc.ReflectionKind.Variable,
@@ -325,6 +337,10 @@ function getDocumentedAPI(fullName: string, node: typedoc.Reflection): Documente
       return getDocumentedInterface(fullName, node)
     }
 
+    if (node.isDeclaration() && node.kind === typedoc.ReflectionKind.TypeAlias) {
+      return getDocumentedType(fullName, node)
+    }
+
     throw new Error(`Unsupported documented API kind: ${typedoc.ReflectionKind[node.kind]}`)
   } catch (e) {
     throw new Error(
@@ -401,6 +417,22 @@ function getDocumentedInterface(
     description: getApiDescription(node.comment!),
     properties,
     methods,
+  }
+}
+
+function getDocumentedType(fullName: string, node: typedoc.DeclarationReflection): DocumentedType {
+  let name = getApiNameFromFullName(fullName)
+  return {
+    type: 'type',
+    path: getApiFilePath(fullName),
+    source: node.sources?.[0]?.url,
+    name,
+    aliases: getApiAliases(node.comment!),
+    description: getApiDescription(node.comment!),
+    signature: node
+      .toString()
+      .replace(/^TypeAlias/, 'type')
+      .replace(new RegExp(`${name}: `), `${name} = `),
   }
 }
 
@@ -622,6 +654,8 @@ async function writeMarkdownFiles(comments: DocumentedAPI[]) {
       await fs.writeFile(mdPath, await getClassMarkdown(comment))
     } else if (comment.type === 'interface') {
       await fs.writeFile(mdPath, await getInterfaceMarkdown(comment))
+    } else if (comment.type === 'type') {
+      await fs.writeFile(mdPath, await getTypeMarkdown(comment))
     }
   }
 }
@@ -731,6 +765,12 @@ async function getInterfaceMarkdown(comment: DocumentedInterface): Promise<strin
         )
       : undefined,
   ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+async function getTypeMarkdown(comment: DocumentedType): Promise<string> {
+  return [...getCommonMarkdown(comment), h2('Signature', await pre(comment.signature))]
     .filter(Boolean)
     .join('\n\n')
 }
