@@ -58,6 +58,10 @@ type DocumentedInterface = {
   methods: Method[] | undefined
 }
 
+type DocumentedInterfaceFunction = Omit<DocumentedFunction, 'type'> & {
+  type: 'interface-function'
+}
+
 // Documented interface API
 type DocumentedType = {
   type: 'type'
@@ -69,7 +73,12 @@ type DocumentedType = {
   signature: string
 }
 
-type DocumentedAPI = DocumentedFunction | DocumentedClass | DocumentedInterface | DocumentedType
+type DocumentedAPI =
+  | DocumentedFunction
+  | DocumentedClass
+  | DocumentedInterface
+  | DocumentedInterfaceFunction
+  | DocumentedType
 
 type Maps = {
   comments: Map<string, typedoc.Reflection> // full name => TypeDoc Reflection
@@ -322,23 +331,19 @@ function getAliasedAPIs(comments: Map<string, typedoc.Reflection>): Set<string> 
 function getDocumentedAPI(fullName: string, node: typedoc.Reflection): DocumentedAPI {
   try {
     if (node.isSignature()) {
-      return getDocumentedFunction(fullName, node)
-    }
-
-    if (node.isDeclaration() && node.kind === typedoc.ReflectionKind.Class) {
-      return getDocumentedClass(fullName, node)
-    }
-
-    if (node.isDeclaration() && node.kind === typedoc.ReflectionKind.Interface) {
-      return getDocumentedInterface(fullName, node)
-    }
-
-    if (node.isDeclaration() && node.kind === typedoc.ReflectionKind.Interface) {
-      return getDocumentedInterface(fullName, node)
-    }
-
-    if (node.isDeclaration() && node.kind === typedoc.ReflectionKind.TypeAlias) {
-      return getDocumentedType(fullName, node)
+      if (node.parent.kind === typedoc.ReflectionKind.Function) {
+        return getDocumentedFunction(fullName, node)
+      } else if (node.parent.kind === typedoc.ReflectionKind.Interface) {
+        return getDocumentedInterfaceFunction(fullName, node)
+      }
+    } else if (node.isDeclaration()) {
+      if (node.kind === typedoc.ReflectionKind.Class) {
+        return getDocumentedClass(fullName, node)
+      } else if (node.kind === typedoc.ReflectionKind.Interface) {
+        return getDocumentedInterface(fullName, node)
+      } else if (node.kind === typedoc.ReflectionKind.TypeAlias) {
+        return getDocumentedType(fullName, node)
+      }
     }
 
     throw new Error(`Unsupported documented API kind: ${typedoc.ReflectionKind[node.kind]}`)
@@ -368,6 +373,25 @@ function getDocumentedFunction(
       : undefined,
     ...method,
   }
+}
+
+function getDocumentedInterfaceFunction(
+  fullName: string,
+  node: typedoc.SignatureReflection,
+): DocumentedInterfaceFunction {
+  let { type, ...fn } = getDocumentedFunction(fullName, node)
+  return {
+    type: 'interface-function',
+    name: fn.name,
+    signature: fn.signature,
+    description: fn.description,
+    parameters: fn.parameters,
+    returns: fn.returns,
+    example: fn.example,
+    path: fn.path,
+    source: fn.source,
+    aliases: fn.aliases,
+  } satisfies DocumentedInterfaceFunction
 }
 
 function getDocumentedClass(
@@ -422,6 +446,22 @@ function getDocumentedInterface(
 
 function getDocumentedType(fullName: string, node: typedoc.DeclarationReflection): DocumentedType {
   let name = getApiNameFromFullName(fullName)
+
+  //TODO: We my need to do manual signature construction for types with generics
+  //
+  // The `Action` type here:
+  //   https://github.com/remix-run/remix/blob/ffdd2740b07b9c90518617b78831c255fa8aadd6/packages/fetch-router/src/lib/controller.ts#L40
+  //
+  //   type Action<method extends RequestMethod | 'ANY', pattern extends string> =
+  //     | RequestHandlerWithMiddleware<method, pattern>
+  //     | RequestHandler<method, Params<pattern>>
+  //
+  // Results in this via `toString()` and loses the generic `extends` stuff:
+  //
+  //   type Action<method, pattern> =
+  //     | RequestHandlerWithMiddleware<method, pattern>
+  //     | RequestHandler<method, Params<pattern>>;
+
   return {
     type: 'type',
     path: getApiFilePath(fullName),
@@ -432,7 +472,7 @@ function getDocumentedType(fullName: string, node: typedoc.DeclarationReflection
     signature: node
       .toString()
       .replace(/^TypeAlias/, 'type')
-      .replace(new RegExp(`${name}: `), `${name} = `),
+      .replace(new RegExp(`(${name}(<.*>)?): `), `$1 = `),
   }
 }
 
@@ -533,10 +573,21 @@ function getApiMethod(fullName: string, node: typedoc.SignatureReflection): Meth
 
   let returnType = node.type ? node.type.toString() : 'void'
   let signatureParams = parameters.map((p) => `${p.name}: ${p.type}`).join(', ')
-  let signature = `${node.name}(${signatureParams}): ${returnType}`
 
+  let signature: string
   if (node.parent.kind === typedoc.ReflectionKind.Function) {
-    signature = `function ${signature}`
+    signature = `function ${node.name}(${signatureParams}): ${returnType}`
+  } else if (node.parent.kind === typedoc.ReflectionKind.Interface) {
+    signature = [`interface ${node.name} {`, `(${signatureParams}): ${returnType}`, `}`].join('\n')
+  } else if (node.parent.kind === typedoc.ReflectionKind.Constructor) {
+    signature = `constructor${node.name}(${signatureParams}): ${returnType}`
+  } else if (node.parent.kind === typedoc.ReflectionKind.Method) {
+    signature = `${node.name}(${signatureParams}): ${returnType}`
+  } else {
+    invariant(
+      false,
+      `Unhandled parent kind for method signature: ${typedoc.ReflectionKind[node.parent.kind]}`,
+    )
   }
 
   return {
@@ -654,6 +705,8 @@ async function writeMarkdownFiles(comments: DocumentedAPI[]) {
       await fs.writeFile(mdPath, await getClassMarkdown(comment))
     } else if (comment.type === 'interface') {
       await fs.writeFile(mdPath, await getInterfaceMarkdown(comment))
+    } else if (comment.type === 'interface-function') {
+      await fs.writeFile(mdPath, await getInterfaceFunctionMarkdown(comment))
     } else if (comment.type === 'type') {
       await fs.writeFile(mdPath, await getTypeMarkdown(comment))
     }
@@ -764,6 +817,28 @@ async function getInterfaceMarkdown(comment: DocumentedInterface): Promise<strin
             .join('\n\n'),
         )
       : undefined,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+async function getInterfaceFunctionMarkdown(comment: DocumentedInterfaceFunction): Promise<string> {
+  return [
+    ...getCommonMarkdown(comment),
+    h2('Signature', await pre(comment.signature)),
+    comment.example
+      ? h2(
+          'Example',
+          comment.example.trim().startsWith('```') ? comment.example : await pre(comment.example),
+        )
+      : undefined,
+    comment.parameters.length > 0
+      ? h2(
+          'Params',
+          comment.parameters.map((param) => h3(code(param.name), param.description)).join('\n\n'),
+        )
+      : undefined,
+    comment.returns ? h2('Returns', comment.returns) : undefined,
   ]
     .filter(Boolean)
     .join('\n\n')
