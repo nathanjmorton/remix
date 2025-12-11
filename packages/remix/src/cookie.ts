@@ -1,1 +1,1 @@
-export { createCookie, Cookie } from '@remix-run/cookie'
+export * from '@remix-run/cookie'

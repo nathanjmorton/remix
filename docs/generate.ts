@@ -89,6 +89,11 @@ type Maps = {
 
 let { values: cliArgs } = util.parseArgs({
   options: {
+    // Enable additional debugging logs
+    debug: {
+      type: 'boolean',
+      short: 'd',
+    },
     // Path to a TypeDoc JSON file to use as the input, instead of running Typedoc
     input: {
       type: 'string',
@@ -227,7 +232,7 @@ function createLookupMaps(reflection: typedoc.ProjectReflection): Maps {
 
       let indent = '  '.repeat(apiName.split('.').length - 1)
       let logApi = (suffix: string) =>
-        log(
+        debug(
           [
             `${indent}[${typedoc.ReflectionKind[child.kind]}]`,
             apiName,
@@ -462,6 +467,24 @@ function getDocumentedType(fullName: string, node: typedoc.DeclarationReflection
   //     | RequestHandlerWithMiddleware<method, pattern>
   //     | RequestHandler<method, Params<pattern>>;
 
+  let signature = node
+    .toString()
+    .replace(/^TypeAlias/, 'type')
+    .replace(new RegExp(`(${name}(<.*>)?): `), `$1 = `)
+
+  let childrenSignature = ''
+  node.traverse((c) => {
+    let childSignature = c.toString().replace(/^Property /, '')
+    if (c.flags.isOptional) {
+      childSignature = childSignature.replace(/: /, '?: ')
+    }
+    childrenSignature += `  ${childSignature}\n`
+  })
+
+  if (childrenSignature) {
+    signature += ` = {\n${childrenSignature}\n}`
+  }
+
   return {
     type: 'type',
     path: getApiFilePath(fullName),
@@ -469,10 +492,7 @@ function getDocumentedType(fullName: string, node: typedoc.DeclarationReflection
     name,
     aliases: getApiAliases(node.comment!),
     description: getApiDescription(node.comment!),
-    signature: node
-      .toString()
-      .replace(/^TypeAlias/, 'type')
-      .replace(new RegExp(`(${name}(<.*>)?): `), `$1 = `),
+    signature,
   }
 }
 
@@ -722,21 +742,52 @@ const h4 = (heading: string, body: string) => h(4, heading, body)
 const code = (content: string) => `\`${content}\``
 const p = (content: string) => `${content}`
 const pre = async (content: string, lang = 'ts') => {
-  try {
-    content = await prettier.format(content, { parser: 'typescript' })
-  } catch (e) {
+  if (content.includes('(...)')) {
+    // Prettier chokes on the ellipsis syntax in function signatures
     warn(
-      'Failed to format code block, using unformatted content: ',
-      content.length > 30 ? content.substring(0, 30) + '...' : content,
+      'Skipping formatting for code block with ellipsis syntax: ',
+      content.substring(0, 50) + '...',
     )
-    warn(e)
+  } else {
+    try {
+      content = await prettier.format(content, { parser: 'typescript' })
+    } catch (e) {
+      warn(
+        'Failed to format code block, using unformatted content: ',
+        content.length > 30 ? content.substring(0, 30) + '...' : content,
+      )
+      warn(e)
+    }
   }
   return `\`\`\`${lang}\n${content}\n\`\`\``
 }
 
+function frontmatter(comment: DocumentedAPI) {
+  return ['---', `title: ${comment.name}`, `type: ${comment.type}`, '---'].join('\n')
+}
+
+function name(comment: DocumentedAPI) {
+  return h1(comment.name)
+}
+
+function source(comment: DocumentedAPI) {
+  return comment.source ? p(`[View Source](${comment.source})`) : undefined
+}
+
+function summary(comment: DocumentedAPI) {
+  return h2('Summary', comment.description)
+}
+
+function aliases(comment: DocumentedAPI) {
+  return comment.aliases ? h2('Aliases', comment.aliases.join(', ')) : undefined
+}
 async function getFunctionMarkdown(comment: DocumentedFunction): Promise<string> {
   return [
-    ...getCommonMarkdown(comment),
+    frontmatter(comment),
+    name(comment),
+    source(comment),
+    summary(comment),
+    aliases(comment),
     h2('Signature', await pre(comment.signature)),
     comment.example
       ? h2(
@@ -758,7 +809,11 @@ async function getFunctionMarkdown(comment: DocumentedFunction): Promise<string>
 
 async function getClassMarkdown(comment: DocumentedClass): Promise<string> {
   return [
-    ...getCommonMarkdown(comment),
+    frontmatter(comment),
+    name(comment),
+    source(comment),
+    summary(comment),
+    aliases(comment),
     comment.example ? h2('Example', comment.example) : undefined,
     comment.constructor
       ? h2(
@@ -797,7 +852,11 @@ async function getClassMarkdown(comment: DocumentedClass): Promise<string> {
 
 async function getInterfaceMarkdown(comment: DocumentedInterface): Promise<string> {
   return [
-    ...getCommonMarkdown(comment),
+    frontmatter(comment),
+    name(comment),
+    source(comment),
+    summary(comment),
+    aliases(comment),
     comment.properties && comment.properties.length > 0
       ? h2(
           'Properties',
@@ -824,7 +883,11 @@ async function getInterfaceMarkdown(comment: DocumentedInterface): Promise<strin
 
 async function getInterfaceFunctionMarkdown(comment: DocumentedInterfaceFunction): Promise<string> {
   return [
-    ...getCommonMarkdown(comment),
+    frontmatter(comment),
+    name(comment),
+    source(comment),
+    summary(comment),
+    aliases(comment),
     h2('Signature', await pre(comment.signature)),
     comment.example
       ? h2(
@@ -845,22 +908,25 @@ async function getInterfaceFunctionMarkdown(comment: DocumentedInterfaceFunction
 }
 
 async function getTypeMarkdown(comment: DocumentedType): Promise<string> {
-  return [...getCommonMarkdown(comment), h2('Signature', await pre(comment.signature))]
+  return [
+    frontmatter(comment),
+    name(comment),
+    source(comment),
+    summary(comment),
+    aliases(comment),
+    h2('Signature', await pre(comment.signature)),
+  ]
     .filter(Boolean)
     .join('\n\n')
 }
 
-function getCommonMarkdown(comment: DocumentedAPI): (string | undefined)[] {
-  return [
-    ['---', `title: ${comment.name}`, `type: ${comment.type}`, '---'].join('\n'),
-    h1(comment.name),
-    comment.source ? p(`[View Source](${comment.source})`) : undefined,
-    h2('Summary', comment.description),
-    comment.aliases ? h2('Aliases', comment.aliases.join(', ')) : undefined,
-  ].filter(Boolean)
-}
-
 //#region utils
+
+function debug(...args: unknown[]) {
+  if (cliArgs.debug) {
+    console.debug('🛠️', ...args)
+  }
+}
 
 function log(...args: unknown[]) {
   console.log(...args)

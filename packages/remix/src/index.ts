@@ -1,1 +1,1 @@
-export { createRouter } from '@remix-run/fetch-router'
+export * from '@remix-run/fetch-router'
