@@ -29,7 +29,7 @@ export interface ClientAddress {
  * [MDN `Response` Reference](https://developer.mozilla.org/en-US/docs/Web/API/Response)
  *
  * @param error The error that was thrown
- * @returns A response to send to the client, or `undefined` for the default error response
+ * @return A response to send to the client, or `undefined` for the default error response
  */
 export interface ErrorHandler {
   (error: unknown): void | Response | Promise<void | Response>
@@ -44,7 +44,7 @@ export interface ErrorHandler {
  *
  * @param request The incoming request
  * @param client Information about the client that sent the request
- * @returns A response to send to the client
+ * @return A response to send to the client
  */
 export interface FetchHandler {
   (request: Request, client: ClientAddress): Response | Promise<Response>

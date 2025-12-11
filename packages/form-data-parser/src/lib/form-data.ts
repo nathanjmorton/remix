@@ -47,7 +47,7 @@ export class FileUpload extends File {
  * A function used for handling file uploads.
  *
  * @param file The uploaded file
- * @returns A value to store in `FormData`, or `void`/`null` to skip
+ * @return A value to store in `FormData`, or `void`/`null` to skip
  */
 export interface FileUploadHandler {
   (file: FileUpload): void | null | string | Blob | Promise<void | null | string | Blob>
@@ -84,7 +84,7 @@ export interface ParseFormDataOptions extends MultipartParserOptions {
  * @param request The `Request` object to parse
  * @param options Options for the parser
  * @param uploadHandler A function that handles file uploads. It receives a `File` object and may return any value that is valid in a `FormData` object
- * @returns A `Promise` that resolves to a `FormData` object containing the parsed data
+ * @return A `Promise` that resolves to a `FormData` object containing the parsed data
  */
 export async function parseFormData(
   request: Request,

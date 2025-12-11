@@ -71,7 +71,7 @@ export interface Router {
    *
    * @param input The request input to fetch
    * @param init The request init options
-   * @returns The response from the route that matched the request
+   * @return The response from the route that matched the request
    */
   fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>
   /**
@@ -177,7 +177,7 @@ function noMatchHandler({ url }: RequestContext): Response {
  * Create a new router.
  *
  * @param options Options to configure the router
- * @returns The new router
+ * @return The new router
  */
 export function createRouter(options?: RouterOptions): Router {
   let defaultHandler = options?.defaultHandler ?? noMatchHandler

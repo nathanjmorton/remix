@@ -154,7 +154,7 @@ export class Cookie {
    * Extracts the value of this cookie from a `Cookie` header value.
    *
    * @param headerValue The `Cookie` header to parse
-   * @returns The value of this cookie, or `null` if it's not present
+   * @return The value of this cookie, or `null` if it's not present
    */
   async parse(headerValue: string | null): Promise<string | null> {
     if (!headerValue) return null
@@ -218,7 +218,7 @@ export class Cookie {
    *
    * @param value The value to serialize
    * @param props Additional properties to use when serializing the cookie
-   * @returns The `Set-Cookie` header value for this cookie
+   * @return The `Set-Cookie` header value for this cookie
    */
   async serialize(value: string, props?: CookieProperties): Promise<string> {
     let header = new SetCookieHeader({
@@ -251,7 +251,7 @@ export class Cookie {
  *
  * @param name The name of the cookie
  * @param options Options for the cookie
- * @returns A new {@link Cookie} instance
+ * @return A new `Cookie` object
  */
 export function createCookie(name: string, options?: CookieOptions): Cookie {
   return new Cookie(name, options)

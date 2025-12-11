@@ -20,7 +20,7 @@ export interface MethodOverrideOptions {
  * some other middleware that provides `context.formData`.
  *
  * @param options Options for the method override middleware
- * @returns A middleware that overrides `context.method` with the value of the method override field
+ * @return A middleware that overrides `context.method` with the value of the method override field
  */
 export function methodOverride(options?: MethodOverrideOptions): Middleware {
   let fieldName = options?.fieldName ?? '_method'

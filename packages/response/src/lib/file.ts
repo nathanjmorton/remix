@@ -5,7 +5,7 @@ import { isCompressibleMimeType } from '@remix-run/mime'
  * Custom function for computing file digests.
  *
  * @param file The file to hash
- * @returns The computed digest as a string
+ * @return The computed digest as a string
  *
  * @example
  * async (file) => {
@@ -81,7 +81,7 @@ export interface FileResponseOptions {
  * @param file The file to send
  * @param request The request object
  * @param options Configuration options
- * @returns A `Response` object containing the file
+ * @return A `Response` object containing the file
  *
  * @example
  * import { createFileResponse } from '@remix-run/response/file'

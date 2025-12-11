@@ -41,7 +41,7 @@ export class IfRange implements HeaderValue {
    * Weak entity tags (prefixed with `W/`) are never considered a match.
    *
    * @param resource The current resource state to compare against
-   * @returns `true` if the condition is satisfied, `false` otherwise
+   * @return `true` if the condition is satisfied, `false` otherwise
    *
    * @example
    * ```ts
@@ -84,7 +84,7 @@ export class IfRange implements HeaderValue {
   /**
    * Returns the string representation of the header value.
    *
-   * @returns The header value as a string
+   * @return The header value as a string
    */
   toString() {
     return this.value

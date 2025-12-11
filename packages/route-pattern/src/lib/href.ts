@@ -25,7 +25,7 @@ export class MissingParamError extends Error {
 /**
  * Create a reusable href builder function.
  *
- * @returns A function that builds hrefs from patterns and parameters
+ * @return A function that builds hrefs from patterns and parameters
  */
 export function createHrefBuilder<T extends string | RoutePattern = string>(): HrefBuilder<T> {
   return (pattern: string | RoutePattern, ...args: any) =>
@@ -122,7 +122,7 @@ export interface HrefBuilder<T extends string | RoutePattern = string> {
   /**
    * @param pattern The pattern to build an href for
    * @param args The parameters and optional search params
-   * @returns The built href
+   * @return The built href
    */
   <P extends string extends T ? string : SourceOf<T> | Variant<SourceOf<T>>>(
     pattern: P | RoutePattern<P>,

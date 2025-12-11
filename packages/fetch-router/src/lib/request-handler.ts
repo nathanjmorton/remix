@@ -8,7 +8,7 @@ import type { Route } from './route-map.ts'
  * A request handler function that returns some kind of response.
  *
  * @param context The request context
- * @returns The response
+ * @return The response
  */
 export interface RequestHandler<
   method extends RequestMethod | 'ANY' = RequestMethod | 'ANY',

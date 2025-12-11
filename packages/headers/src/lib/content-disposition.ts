@@ -88,7 +88,7 @@ export class ContentDisposition implements HeaderValue, ContentDispositionInit {
   /**
    * Returns the string representation of the header value.
    *
-   * @returns The header value as a string
+   * @return The header value as a string
    */
   toString(): string {
     if (!this.type) {

@@ -9,7 +9,7 @@ import type { RequestMethod } from './request-methods.ts'
  *
  * @param context The request context
  * @param next A function that invokes the next middleware or handler in the chain
- * @returns A response to short-circuit the chain, or `undefined`/`void` to continue
+ * @return A response to short-circuit the chain, or `undefined`/`void` to continue
  */
 export interface Middleware<
   method extends RequestMethod | 'ANY' = RequestMethod | 'ANY',
@@ -24,7 +24,7 @@ export interface Middleware<
 /**
  * A function that invokes the next middleware or handler in the chain.
  *
- * @returns The response from the downstream handler
+ * @return The response from the downstream handler
  */
 export type NextFunction = () => Promise<Response>
 

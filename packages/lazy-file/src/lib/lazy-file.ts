@@ -15,7 +15,7 @@ export interface LazyContent {
    *
    * @param start The start index (inclusive)
    * @param end The end index (exclusive)
-   * @returns A readable stream of the content
+   * @return A readable stream of the content
    */
   stream(start?: number, end?: number): ReadableStream<Uint8Array<ArrayBuffer>>
 }
@@ -70,7 +70,7 @@ export class LazyBlob extends Blob {
    *
    * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/API/Blob/arrayBuffer)
    *
-   * @returns A promise that resolves to an `ArrayBuffer`
+   * @return A promise that resolves to an `ArrayBuffer`
    */
   async arrayBuffer(): Promise<ArrayBuffer> {
     return this.#content.arrayBuffer()
@@ -81,7 +81,7 @@ export class LazyBlob extends Blob {
    *
    * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/API/Blob/bytes)
    *
-   * @returns A promise that resolves to a `Uint8Array`
+   * @return A promise that resolves to a `Uint8Array`
    */
   async bytes(): Promise<Uint8Array<ArrayBuffer>> {
     return this.#content.bytes()
@@ -104,7 +104,7 @@ export class LazyBlob extends Blob {
    * @param start The start index (inclusive)
    * @param end The end index (exclusive)
    * @param contentType The content type of the new blob
-   * @returns A new `Blob` containing the sliced data
+   * @return A new `Blob` containing the sliced data
    */
   slice(start?: number, end?: number, contentType?: string): Blob {
     return this.#content.slice(start, end, contentType)
@@ -115,7 +115,7 @@ export class LazyBlob extends Blob {
    *
    * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/API/Blob/stream)
    *
-   * @returns A readable stream of the blob's contents
+   * @return A readable stream of the blob's contents
    */
   stream(): ReadableStream<Uint8Array<ArrayBuffer>> {
     return this.#content.stream()
@@ -126,7 +126,7 @@ export class LazyBlob extends Blob {
    *
    * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/API/Blob/text)
    *
-   * @returns A promise that resolves to the blob's contents as a string
+   * @return A promise that resolves to the blob's contents as a string
    */
   async text(): Promise<string> {
     return this.#content.text()
@@ -180,7 +180,7 @@ export class LazyFile extends File {
    *
    * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/API/Blob/arrayBuffer)
    *
-   * @returns A promise that resolves to an `ArrayBuffer`
+   * @return A promise that resolves to an `ArrayBuffer`
    */
   async arrayBuffer(): Promise<ArrayBuffer> {
     return this.#content.arrayBuffer()
@@ -191,7 +191,7 @@ export class LazyFile extends File {
    *
    * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/API/Blob/bytes)
    *
-   * @returns A promise that resolves to a `Uint8Array`
+   * @return A promise that resolves to a `Uint8Array`
    */
   async bytes(): Promise<Uint8Array<ArrayBuffer>> {
     return this.#content.bytes()
@@ -214,7 +214,7 @@ export class LazyFile extends File {
    * @param start The start index (inclusive)
    * @param end The end index (exclusive)
    * @param contentType The content type of the new blob
-   * @returns A new `Blob` containing the sliced data
+   * @return A new `Blob` containing the sliced data
    */
   slice(start?: number, end?: number, contentType?: string): Blob {
     return this.#content.slice(start, end, contentType)
@@ -225,7 +225,7 @@ export class LazyFile extends File {
    *
    * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/API/Blob/stream)
    *
-   * @returns A readable stream of the file's contents
+   * @return A readable stream of the file's contents
    */
   stream(): ReadableStream<Uint8Array<ArrayBuffer>> {
     return this.#content.stream()
@@ -236,7 +236,7 @@ export class LazyFile extends File {
    *
    * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/API/Blob/text)
    *
-   * @returns A promise that resolves to the file's contents as a string
+   * @return A promise that resolves to the file's contents as a string
    */
   async text(): Promise<string> {
     return this.#content.text()

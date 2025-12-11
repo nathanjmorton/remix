@@ -60,7 +60,7 @@ export interface RequestListenerOptions {
  *
  * @param handler The fetch handler to use for processing incoming requests
  * @param options Request listener options
- * @returns A Node.js request listener function
+ * @return A Node.js request listener function
  */
 export function createRequestListener(
   handler: FetchHandler,
@@ -127,7 +127,7 @@ export type RequestOptions = Omit<RequestListenerOptions, 'onError'>
  * @param req The incoming request object
  * @param res The server response object
  * @param options Options for creating the request
- * @returns A `Request` object
+ * @return A `Request` object
  */
 export function createRequest(
   req: http.IncomingMessage | http2.Http2ServerRequest,
@@ -180,7 +180,7 @@ export function createRequest(
  * [`http.IncomingMessage`](https://nodejs.org/api/http.html#class-httpincomingmessage)/[`http2.Http2ServerRequest`](https://nodejs.org/api/http2.html#class-http2http2serverrequest).
  *
  * @param req The incoming request object
- * @returns A `Headers` object
+ * @return A `Headers` object
  */
 export function createHeaders(req: http.IncomingMessage | http2.Http2ServerRequest): Headers {
   let headers = new Headers()
