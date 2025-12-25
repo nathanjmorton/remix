@@ -9,6 +9,7 @@ packages:
   - docs
   - packages/*
   - packages/fetch-router/demos/*
+  - packages/file-storage/demos/*
   - packages/form-data-parser/demos/*
   - packages/interaction/demos
   - packages/multipart-parser/bench
