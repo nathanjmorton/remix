@@ -1,6 +1,44 @@
 import type { FileStorage, FileMetadata, ListOptions, ListResult } from '../file-storage.ts'
 
 /**
+ * Options for generating a presigned URL.
+ */
+export interface PresignedUrlOptions {
+  /**
+   * The key of the file to generate a URL for.
+   */
+  key: string
+  /**
+   * The HTTP method for the presigned URL.
+   * - `GET`: Generate a URL for downloading the file (default)
+   * - `PUT`: Generate a URL for uploading a file
+   */
+  method?: 'GET' | 'PUT'
+  /**
+   * The number of seconds until the presigned URL expires.
+   * Defaults to 3600 (1 hour). Maximum is 604800 (7 days).
+   */
+  expiresIn?: number
+}
+
+/**
+ * An S3-compatible file storage with additional S3-specific methods.
+ */
+export interface S3FileStorage extends FileStorage {
+  /**
+   * Generate a presigned URL for accessing a file without authentication.
+   *
+   * This is useful for:
+   * - Allowing clients to download files directly from S3
+   * - Allowing clients to upload files directly to S3
+   *
+   * @param options Options for the presigned URL
+   * @returns A presigned URL string
+   */
+  getSignedUrl(options: PresignedUrlOptions): Promise<string>
+}
+
+/**
  * Options for creating an S3-compatible file storage.
  */
 export interface S3FileStorageOptions {
@@ -25,6 +63,11 @@ export interface S3FileStorageOptions {
    */
   secretAccessKey: string
   /**
+   * Optional session token for temporary credentials from AWS STS.
+   * Required when using IAM Identity Center (SSO), AssumeRole, or other STS operations.
+   */
+  sessionToken?: string
+  /**
    * Optional prefix for all keys stored in this storage.
    */
   prefix?: string
@@ -46,8 +89,8 @@ interface S3ListObject {
  * @param options Configuration options for the S3 storage
  * @returns A new file storage backed by S3
  */
-export function createS3FileStorage(options: S3FileStorageOptions): FileStorage {
-  let { bucket, endpoint, region, accessKeyId, secretAccessKey, prefix = '' } = options
+export function createS3FileStorage(options: S3FileStorageOptions): S3FileStorage {
+  let { bucket, endpoint, region, accessKeyId, secretAccessKey, sessionToken, prefix = '' } = options
 
   // Normalize endpoint (remove trailing slash)
   endpoint = endpoint.replace(/\/$/, '')
@@ -73,9 +116,12 @@ export function createS3FileStorage(options: S3FileStorageOptions): FileStorage 
     let amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '')
     let dateStamp = amzDate.slice(0, 8)
 
-    headers.set('x-amz-date', amzDate)
-    headers.set('x-amz-content-sha256', payloadHash)
     headers.set('host', url.host)
+    headers.set('x-amz-content-sha256', payloadHash)
+    headers.set('x-amz-date', amzDate)
+    if (sessionToken) {
+      headers.set('x-amz-security-token', sessionToken)
+    }
 
     // Create canonical request
     let canonicalUri = url.pathname
@@ -111,6 +157,59 @@ export function createS3FileStorage(options: S3FileStorageOptions): FileStorage 
     // Add authorization header
     let authorizationHeader = `${algorithm} Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
     headers.set('authorization', authorizationHeader)
+  }
+
+  async function signUrlQuery(method: string, url: URL, expiresIn: number): Promise<URL> {
+    let now = new Date()
+    let amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '')
+    let dateStamp = amzDate.slice(0, 8)
+    let credentialScope = `${dateStamp}/${region}/s3/aws4_request`
+
+    // Add required query params BEFORE signing (must be in alphabetical order for signing)
+    url.searchParams.set('X-Amz-Algorithm', 'AWS4-HMAC-SHA256')
+    url.searchParams.set('X-Amz-Credential', `${accessKeyId}/${credentialScope}`)
+    url.searchParams.set('X-Amz-Date', amzDate)
+    url.searchParams.set('X-Amz-Expires', String(expiresIn))
+    if (sessionToken) {
+      url.searchParams.set('X-Amz-Security-Token', sessionToken)
+    }
+    url.searchParams.set('X-Amz-SignedHeaders', 'host')
+
+    // Build canonical request
+    let canonicalUri = url.pathname
+    let sortedParams = [...url.searchParams.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    let canonicalQuerystring = sortedParams
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join('&')
+
+    let canonicalHeaders = `host:${url.host}\n`
+    let signedHeaders = 'host'
+
+    // For presigned URLs, use UNSIGNED-PAYLOAD
+    let payloadHash = 'UNSIGNED-PAYLOAD'
+
+    let canonicalRequest = [
+      method,
+      canonicalUri,
+      canonicalQuerystring,
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join('\n')
+
+    // Create string to sign
+    let algorithm = 'AWS4-HMAC-SHA256'
+    let hashedCanonicalRequest = await sha256Hex(canonicalRequest)
+    let stringToSign = [algorithm, amzDate, credentialScope, hashedCanonicalRequest].join('\n')
+
+    // Calculate signature
+    let signingKey = await getSignatureKey(secretAccessKey, dateStamp, region, 's3')
+    let signature = await hmacHex(signingKey, stringToSign)
+
+    // Add signature to URL
+    url.searchParams.set('X-Amz-Signature', signature)
+
+    return url
   }
 
   async function s3Request(
@@ -363,6 +462,23 @@ export function createS3FileStorage(options: S3FileStorageOptions): FileStorage 
 
     async set(key: string, file: File): Promise<void> {
       await putFile(key, file)
+    },
+
+    async getSignedUrl(options: PresignedUrlOptions): Promise<string> {
+      let { key, method = 'GET', expiresIn = 3600 } = options
+
+      // Clamp expiresIn to valid range (1 second to 7 days)
+      expiresIn = Math.max(1, Math.min(expiresIn, 604800))
+
+      let fullKey = getFullKey(key)
+      let encodedKey = fullKey
+        .split('/')
+        .map((segment) => encodeURIComponent(segment))
+        .join('/')
+      let url = new URL(`${endpoint}/${bucket}/${encodedKey}`)
+
+      let signedUrl = await signUrlQuery(method, url, expiresIn)
+      return signedUrl.toString()
     },
   }
 }

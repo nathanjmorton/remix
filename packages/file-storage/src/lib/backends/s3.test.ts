@@ -347,4 +347,107 @@ describe('s3 file storage', async () => {
       assert.ok(files[0].lastModified)
     })
   })
+
+  describe('presigned URLs', () => {
+    it('generates presigned GET URL for downloading', async () => {
+      let file = new File(['Presigned download content'], 'presigned.txt', { type: 'text/plain' })
+
+      keysToCleanup.push('presign-get')
+      await storage.set('presign-get', file)
+
+      let url = await storage.getSignedUrl({ key: 'presign-get', method: 'GET' })
+
+      // URL should be usable without additional auth
+      let response = await fetch(url)
+      assert.ok(response.ok, `Expected OK response, got ${response.status}`)
+      assert.equal(await response.text(), 'Presigned download content')
+    })
+
+    it('generates presigned PUT URL for uploading', async () => {
+      keysToCleanup.push('presign-put')
+
+      let url = await storage.getSignedUrl({ key: 'presign-put', method: 'PUT', expiresIn: 300 })
+
+      // Direct upload without SDK credentials
+      let response = await fetch(url, {
+        method: 'PUT',
+        body: 'Uploaded via presigned URL',
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+      })
+      assert.ok(response.ok, `Expected OK response, got ${response.status}`)
+
+      // Verify it was stored
+      let retrieved = await storage.get('presign-put')
+      assert.ok(retrieved)
+      assert.equal(await retrieved.text(), 'Uploaded via presigned URL')
+    })
+
+    it('includes required query parameters in presigned URL', async () => {
+      let url = await storage.getSignedUrl({ key: 'test-params', method: 'GET', expiresIn: 600 })
+      let parsed = new URL(url)
+
+      assert.ok(parsed.searchParams.has('X-Amz-Algorithm'))
+      assert.ok(parsed.searchParams.has('X-Amz-Credential'))
+      assert.ok(parsed.searchParams.has('X-Amz-Date'))
+      assert.ok(parsed.searchParams.has('X-Amz-Expires'))
+      assert.ok(parsed.searchParams.has('X-Amz-SignedHeaders'))
+      assert.ok(parsed.searchParams.has('X-Amz-Signature'))
+      assert.equal(parsed.searchParams.get('X-Amz-Expires'), '600')
+    })
+
+    it('defaults to GET method and 1 hour expiration', async () => {
+      let url = await storage.getSignedUrl({ key: 'test-defaults' })
+      let parsed = new URL(url)
+
+      assert.equal(parsed.searchParams.get('X-Amz-Expires'), '3600')
+    })
+
+    it('clamps expiration to valid range', async () => {
+      // Test max clamping (7 days = 604800 seconds)
+      let urlMax = await storage.getSignedUrl({ key: 'test', expiresIn: 1000000 })
+      let parsedMax = new URL(urlMax)
+      assert.equal(parsedMax.searchParams.get('X-Amz-Expires'), '604800')
+
+      // Test min clamping (1 second)
+      let urlMin = await storage.getSignedUrl({ key: 'test', expiresIn: 0 })
+      let parsedMin = new URL(urlMin)
+      assert.equal(parsedMin.searchParams.get('X-Amz-Expires'), '1')
+    })
+  })
+})
+
+describe('presigned URLs with session token', () => {
+  it('includes X-Amz-Security-Token in presigned URL when session token is configured', async () => {
+    let storageWithToken = createS3FileStorage({
+      bucket: 'test-bucket',
+      endpoint: 'https://s3.us-east-1.amazonaws.com',
+      region: 'us-east-1',
+      accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+      secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+      sessionToken: 'FwoGZXIvYXdzEBYaDK...',
+    })
+
+    let url = await storageWithToken.getSignedUrl({ key: 'test-file', method: 'GET' })
+    let parsed = new URL(url)
+
+    assert.ok(parsed.searchParams.has('X-Amz-Security-Token'))
+    assert.equal(parsed.searchParams.get('X-Amz-Security-Token'), 'FwoGZXIvYXdzEBYaDK...')
+  })
+
+  it('does not include X-Amz-Security-Token when session token is not configured', async () => {
+    let storageWithoutToken = createS3FileStorage({
+      bucket: 'test-bucket',
+      endpoint: 'https://s3.us-east-1.amazonaws.com',
+      region: 'us-east-1',
+      accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+      secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    })
+
+    let url = await storageWithoutToken.getSignedUrl({ key: 'test-file', method: 'GET' })
+    let parsed = new URL(url)
+
+    assert.ok(!parsed.searchParams.has('X-Amz-Security-Token'))
+  })
 })
