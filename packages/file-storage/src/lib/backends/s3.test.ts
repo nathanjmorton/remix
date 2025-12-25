@@ -24,133 +24,11 @@
  */
 
 import * as assert from 'node:assert/strict'
-import { exec } from 'node:child_process'
-import { afterEach, after, before, describe, it } from 'node:test'
-import { promisify } from 'node:util'
+import { afterEach, after, describe, it } from 'node:test'
 import { parseFormData } from '@remix-run/form-data-parser'
 
 import { createS3FileStorage } from './s3.ts'
-
-let execAsync = promisify(exec)
-
-let CONTAINER_NAME = 'minio-test'
-let MINIO_PORT = 9000
-let MINIO_CONSOLE_PORT = 9001
-let MINIO_USER = 'minioadmin'
-let MINIO_PASSWORD = 'minioadmin'
-let BUCKET_NAME = 'test-bucket'
-
-async function isDockerAvailable(): Promise<boolean> {
-  try {
-    await execAsync('docker info')
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function cleanupMinio(): Promise<void> {
-  try {
-    // Stop and remove our test container
-    await execAsync(`docker stop ${CONTAINER_NAME} 2>/dev/null || true`)
-    await execAsync(`docker rm ${CONTAINER_NAME} 2>/dev/null || true`)
-    // Also clean up any container using our ports (e.g., old 'minio' container)
-    let { stdout } = await execAsync(
-      `docker ps --filter "publish=${MINIO_PORT}" --format '{{.Names}}' 2>/dev/null || true`,
-    )
-    let containers = stdout.trim().split('\n').filter(Boolean)
-    for (let container of containers) {
-      await execAsync(`docker stop ${container} 2>/dev/null || true`)
-      await execAsync(`docker rm ${container} 2>/dev/null || true`)
-    }
-  } catch {
-    // Ignore errors during cleanup
-  }
-}
-
-async function isMinioRunning(): Promise<boolean> {
-  try {
-    let { stdout } = await execAsync(`docker ps --filter name=${CONTAINER_NAME} --format '{{.Names}}'`)
-    return stdout.trim() === CONTAINER_NAME
-  } catch {
-    return false
-  }
-}
-
-async function isMinioHealthy(): Promise<boolean> {
-  try {
-    let response = await fetch(`http://localhost:${MINIO_PORT}/minio/health/live`)
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
-async function startMinio(): Promise<void> {
-  // Check if container exists but is stopped
-  try {
-    let { stdout } = await execAsync(
-      `docker ps -a --filter name=${CONTAINER_NAME} --format '{{.Names}}'`,
-    )
-    if (stdout.trim() === CONTAINER_NAME) {
-      // Container exists, start it
-      await execAsync(`docker start ${CONTAINER_NAME}`)
-    } else {
-      // Create new container
-      await execAsync(
-        `docker run -d ` +
-          `--name ${CONTAINER_NAME} ` +
-          `-p ${MINIO_PORT}:9000 ` +
-          `-p ${MINIO_CONSOLE_PORT}:9001 ` +
-          `-e MINIO_ROOT_USER=${MINIO_USER} ` +
-          `-e MINIO_ROOT_PASSWORD=${MINIO_PASSWORD} ` +
-          `minio/minio server /data --console-address ":9001"`,
-      )
-    }
-  } catch (error) {
-    throw new Error(`Failed to start MinIO container: ${error}`)
-  }
-
-  // Wait for MinIO to be healthy
-  let attempts = 0
-  let maxAttempts = 30
-  while (attempts < maxAttempts) {
-    if (await isMinioHealthy()) {
-      return
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-    attempts++
-  }
-  throw new Error('MinIO failed to become healthy')
-}
-
-async function createBucket(): Promise<void> {
-  try {
-    await execAsync(
-      `docker exec ${CONTAINER_NAME} mc alias set local http://localhost:9000 ${MINIO_USER} ${MINIO_PASSWORD}`,
-    )
-    await execAsync(`docker exec ${CONTAINER_NAME} mc mb local/${BUCKET_NAME} --ignore-existing`)
-  } catch (error) {
-    throw new Error(`Failed to create bucket: ${error}`)
-  }
-}
-
-async function setupMinio(): Promise<boolean> {
-  if (!(await isDockerAvailable())) {
-    console.log('⚠️  Skipping S3 tests: Docker is not available')
-    return false
-  }
-
-  // Clean up any existing container first
-  console.log('🧹 Cleaning up existing MinIO container...')
-  await cleanupMinio()
-
-  console.log('🚀 Starting MinIO container...')
-  await startMinio()
-
-  await createBucket()
-  return true
-}
+import { cleanupMinio, defaultMinioConfig, setupMinio } from '../testing/minio.ts'
 
 describe('s3 file storage', async () => {
   let available = await setupMinio()
@@ -160,11 +38,11 @@ describe('s3 file storage', async () => {
   }
 
   let storage = createS3FileStorage({
-    bucket: BUCKET_NAME,
-    endpoint: `http://localhost:${MINIO_PORT}`,
+    bucket: defaultMinioConfig.bucketName,
+    endpoint: `http://localhost:${defaultMinioConfig.port}`,
     region: 'us-east-1',
-    accessKeyId: MINIO_USER,
-    secretAccessKey: MINIO_PASSWORD,
+    accessKeyId: defaultMinioConfig.user,
+    secretAccessKey: defaultMinioConfig.password,
     prefix: `test-${Date.now()}`, // Use unique prefix to avoid conflicts
   })
 
