@@ -22,6 +22,79 @@ export interface PresignedUrlOptions {
 }
 
 /**
+ * Options for initiating a multipart upload.
+ */
+export interface MultipartUploadOptions {
+  /**
+   * The key of the file to upload.
+   */
+  key: string
+  /**
+   * The total size of the file in bytes.
+   * Used to calculate the number of parts.
+   */
+  totalSize: number
+  /**
+   * The size of each part in bytes.
+   * Defaults to 10MB. Minimum is 5MB (S3 requirement), maximum is 5GB.
+   */
+  partSize?: number
+  /**
+   * The MIME type of the file.
+   */
+  contentType?: string
+  /**
+   * The number of seconds until the presigned URLs expire.
+   * Defaults to 3600 (1 hour). Maximum is 604800 (7 days).
+   */
+  expiresIn?: number
+}
+
+/**
+ * The result of initiating a multipart upload.
+ */
+export interface MultipartUploadInit {
+  /**
+   * The unique identifier for this multipart upload.
+   * Required for completing or aborting the upload.
+   */
+  uploadId: string
+  /**
+   * The key of the file being uploaded.
+   */
+  key: string
+  /**
+   * The presigned URLs for each part.
+   * Parts must be uploaded in order (partNumber 1, 2, 3, ...).
+   */
+  parts: Array<{
+    /**
+     * The part number (1-indexed).
+     */
+    partNumber: number
+    /**
+     * The presigned URL for uploading this part.
+     */
+    url: string
+  }>
+}
+
+/**
+ * A completed part of a multipart upload.
+ */
+export interface CompletedPart {
+  /**
+   * The part number (1-indexed).
+   */
+  partNumber: number
+  /**
+   * The ETag returned by S3 when the part was uploaded.
+   * This is typically found in the response headers of the PUT request.
+   */
+  etag: string
+}
+
+/**
  * An S3-compatible file storage with additional S3-specific methods.
  */
 export interface S3FileStorage extends FileStorage {
@@ -36,6 +109,46 @@ export interface S3FileStorage extends FileStorage {
    * @returns A presigned URL string
    */
   getSignedUrl(options: PresignedUrlOptions): Promise<string>
+
+  /**
+   * Initiate a multipart upload and get presigned URLs for each part.
+   *
+   * This enables direct browser-to-S3 uploads for large files by:
+   * 1. Server calls this method to get presigned URLs for each part
+   * 2. Browser uploads each part directly to S3 using the presigned URLs
+   * 3. Browser collects the ETag from each upload response header
+   * 4. Server calls `completeMultipartUpload` with the ETags to finalize
+   *
+   * **Important**: Your S3 bucket's CORS configuration must expose the `ETag` header:
+   * ```json
+   * { "ExposeHeaders": ["ETag"] }
+   * ```
+   *
+   * @param options Options for the multipart upload
+   * @returns Upload ID and presigned URLs for each part
+   */
+  initiateMultipartUpload(options: MultipartUploadOptions): Promise<MultipartUploadInit>
+
+  /**
+   * Complete a multipart upload after all parts have been uploaded.
+   *
+   * @param options The upload ID, key, and completed parts with their ETags
+   */
+  completeMultipartUpload(options: {
+    key: string
+    uploadId: string
+    parts: CompletedPart[]
+  }): Promise<void>
+
+  /**
+   * Abort a multipart upload.
+   *
+   * Use this to cancel an in-progress upload and clean up any uploaded parts.
+   * This is important to avoid storage charges for incomplete uploads.
+   *
+   * @param options The upload ID and key to abort
+   */
+  abortMultipartUpload(options: { key: string; uploadId: string }): Promise<void>
 }
 
 /**
@@ -125,8 +238,12 @@ export function createS3FileStorage(options: S3FileStorageOptions): S3FileStorag
 
     // Create canonical request
     let canonicalUri = url.pathname
-    // Query string must be sorted for canonical request
-    let sortedParams = [...url.searchParams.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    // AWS requires byte-order sorting (uppercase before lowercase)
+    let sortedParams = [...url.searchParams.entries()].sort((a, b) => {
+      if (a[0] < b[0]) return -1
+      if (a[0] > b[0]) return 1
+      return 0
+    })
     let canonicalQuerystring = sortedParams
       .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
       .join('&')
@@ -177,7 +294,12 @@ export function createS3FileStorage(options: S3FileStorageOptions): S3FileStorag
 
     // Build canonical request
     let canonicalUri = url.pathname
-    let sortedParams = [...url.searchParams.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    // AWS requires byte-order sorting (uppercase before lowercase)
+    let sortedParams = [...url.searchParams.entries()].sort((a, b) => {
+      if (a[0] < b[0]) return -1
+      if (a[0] > b[0]) return 1
+      return 0
+    })
     let canonicalQuerystring = sortedParams
       .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
       .join('&')
@@ -480,6 +602,127 @@ export function createS3FileStorage(options: S3FileStorageOptions): S3FileStorag
       let signedUrl = await signUrlQuery(method, url, expiresIn)
       return signedUrl.toString()
     },
+
+    async initiateMultipartUpload(options: MultipartUploadOptions): Promise<MultipartUploadInit> {
+      let {
+        key,
+        totalSize,
+        partSize = 10 * 1024 * 1024, // 10MB default
+        contentType = 'application/octet-stream',
+        expiresIn = 3600,
+      } = options
+
+      // Clamp partSize to valid range (5MB to 5GB)
+      let minPartSize = 5 * 1024 * 1024 // 5MB minimum (S3 requirement)
+      let maxPartSize = 5 * 1024 * 1024 * 1024 // 5GB maximum
+      partSize = Math.max(minPartSize, Math.min(partSize, maxPartSize))
+
+      // Clamp expiresIn to valid range
+      expiresIn = Math.max(1, Math.min(expiresIn, 604800))
+
+      // Calculate number of parts
+      let numParts = Math.ceil(totalSize / partSize)
+
+      // S3 has a maximum of 10,000 parts
+      if (numParts > 10000) {
+        throw new Error(
+          `File too large: would require ${numParts} parts, but S3 maximum is 10,000. ` +
+            `Increase partSize or reduce file size.`,
+        )
+      }
+
+      // Initiate multipart upload
+      let response = await s3Request('POST', key, {
+        query: { uploads: '' },
+        headers: {
+          'content-type': contentType,
+        },
+      })
+
+      if (!response.ok) {
+        let text = await response.text()
+        throw new Error(`S3 CreateMultipartUpload failed: ${response.status} - ${text}`)
+      }
+
+      let xml = await response.text()
+      let uploadId = parseUploadId(xml)
+
+      if (!uploadId) {
+        throw new Error('Failed to parse UploadId from S3 response')
+      }
+
+      // Generate presigned URLs for each part
+      let parts: Array<{ partNumber: number; url: string }> = []
+
+      for (let i = 1; i <= numParts; i++) {
+        let fullKey = getFullKey(key)
+        let encodedKey = fullKey
+          .split('/')
+          .map((segment) => encodeURIComponent(segment))
+          .join('/')
+        let url = new URL(`${endpoint}/${bucket}/${encodedKey}`)
+        url.searchParams.set('partNumber', String(i))
+        url.searchParams.set('uploadId', uploadId)
+
+        let signedUrl = await signUrlQuery('PUT', url, expiresIn)
+        parts.push({ partNumber: i, url: signedUrl.toString() })
+      }
+
+      return { uploadId, key, parts }
+    },
+
+    async completeMultipartUpload(options: {
+      key: string
+      uploadId: string
+      parts: CompletedPart[]
+    }): Promise<void> {
+      let { key, uploadId, parts } = options
+
+      // Sort parts by part number
+      let sortedParts = [...parts].sort((a, b) => a.partNumber - b.partNumber)
+
+      // Build XML body
+      let xmlParts = sortedParts
+        .map(
+          (part) =>
+            `<Part><PartNumber>${part.partNumber}</PartNumber><ETag>${escapeXml(part.etag)}</ETag></Part>`,
+        )
+        .join('')
+      let body = `<?xml version="1.0" encoding="UTF-8"?><CompleteMultipartUpload>${xmlParts}</CompleteMultipartUpload>`
+
+      let response = await s3Request('POST', key, {
+        query: { uploadId },
+        body,
+        headers: {
+          'content-type': 'application/xml',
+        },
+      })
+
+      if (!response.ok) {
+        let text = await response.text()
+        throw new Error(`S3 CompleteMultipartUpload failed: ${response.status} - ${text}`)
+      }
+
+      // Check for error in response body (S3 can return 200 with error in body)
+      let responseText = await response.text()
+      if (responseText.includes('<Error>')) {
+        throw new Error(`S3 CompleteMultipartUpload failed: ${responseText}`)
+      }
+    },
+
+    async abortMultipartUpload(options: { key: string; uploadId: string }): Promise<void> {
+      let { key, uploadId } = options
+
+      let response = await s3Request('DELETE', key, {
+        query: { uploadId },
+      })
+
+      // S3 returns 204 for successful abort
+      if (!response.ok && response.status !== 204) {
+        let text = await response.text()
+        throw new Error(`S3 AbortMultipartUpload failed: ${response.status} - ${text}`)
+      }
+    },
   }
 }
 
@@ -571,4 +814,18 @@ function decodeXmlEntities(str: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
+}
+
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function parseUploadId(xml: string): string | undefined {
+  let match = /<UploadId>([\s\S]*?)<\/UploadId>/.exec(xml)
+  return match ? decodeXmlEntities(match[1]) : undefined
 }

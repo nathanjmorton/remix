@@ -1,7 +1,10 @@
 /**
- * S3 Presigned PUT URL Demo
+ * S3 Presigned URL Demo
  *
- * This demo shows how to use presigned PUT URLs for direct client-to-S3 uploads.
+ * This demo shows how to use presigned URLs for direct client-to-S3 uploads:
+ * - Simple presigned PUT URL for small files
+ * - Multipart upload with presigned URLs for large files
+ *
  * It always runs MinIO locally, and optionally connects to AWS S3 if env vars are set.
  *
  * ## MinIO only:
@@ -120,8 +123,9 @@ let server = http.createServer(
   </style>
 </head>
 <body>
-  <h1>S3 Presigned PUT URL Demo</h1>
-  <p>Upload files directly to S3-compatible storage using presigned PUT URLs.</p>
+  <h1>S3 Presigned URL Demo</h1>
+  <p>Upload files directly to S3-compatible storage using presigned URLs.</p>
+  <p style="font-size: 0.85rem; color: #666;">Files ≤5MB use simple PUT. Files >5MB use multipart upload.</p>
 
   <div class="panels">
     <!-- MinIO Panel -->
@@ -203,23 +207,73 @@ let server = http.createServer(
         uploadBtn.disabled = true
         statusEl.style.display = 'block'
         statusEl.className = 'status'
-        statusEl.textContent = 'Getting presigned URL...'
+        
+        let key = 'file-' + Date.now()
+        let MULTIPART_THRESHOLD = 5 * 1024 * 1024 // 5MB
 
         try {
-          let key = 'file-' + Date.now()
-          let res = await fetch('/api/' + backend + '/presign?key=' + encodeURIComponent(key))
-          if (!res.ok) throw new Error('Failed to get presigned URL')
-          let { url } = await res.json()
+          if (file.size <= MULTIPART_THRESHOLD) {
+            // Simple upload for small files
+            statusEl.textContent = 'Getting presigned URL...'
+            let res = await fetch('/api/' + backend + '/presign?key=' + encodeURIComponent(key))
+            if (!res.ok) throw new Error('Failed to get presigned URL')
+            let { url } = await res.json()
 
-          statusEl.textContent = 'Uploading...'
-          let uploadRes = await fetch(url, {
-            method: 'PUT',
-            body: file,
-            headers: { 'Content-Type': file.type || 'application/octet-stream' }
-          })
-          if (!uploadRes.ok) throw new Error('Upload failed: ' + uploadRes.status)
+            statusEl.textContent = 'Uploading...'
+            let uploadRes = await fetch(url, {
+              method: 'PUT',
+              body: file,
+              headers: { 'Content-Type': file.type || 'application/octet-stream' }
+            })
+            if (!uploadRes.ok) throw new Error('Upload failed: ' + uploadRes.status)
+          } else {
+            // Multipart upload for large files
+            statusEl.textContent = 'Initiating multipart upload...'
+            let initRes = await fetch('/api/' + backend + '/multipart/initiate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                key,
+                totalSize: file.size,
+                contentType: file.type || 'application/octet-stream'
+              })
+            })
+            if (!initRes.ok) throw new Error('Failed to initiate multipart upload')
+            let { uploadId, parts } = await initRes.json()
 
-          statusEl.textContent = 'Done! Key: ' + key
+            // Upload each part
+            let completedParts = []
+            let partSize = Math.ceil(file.size / parts.length)
+            
+            for (let i = 0; i < parts.length; i++) {
+              let start = i * partSize
+              let end = Math.min(start + partSize, file.size)
+              let blob = file.slice(start, end)
+              
+              statusEl.textContent = 'Uploading part ' + (i + 1) + '/' + parts.length + '...'
+              
+              let uploadRes = await fetch(parts[i].url, {
+                method: 'PUT',
+                body: blob
+              })
+              if (!uploadRes.ok) throw new Error('Part ' + (i + 1) + ' upload failed: ' + uploadRes.status)
+              
+              let etag = uploadRes.headers.get('ETag')
+              if (!etag) throw new Error('No ETag in part ' + (i + 1) + ' response')
+              completedParts.push({ partNumber: parts[i].partNumber, etag })
+            }
+
+            // Complete multipart upload
+            statusEl.textContent = 'Completing upload...'
+            let completeRes = await fetch('/api/' + backend + '/multipart/complete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ key, uploadId, parts: completedParts })
+            })
+            if (!completeRes.ok) throw new Error('Failed to complete multipart upload')
+          }
+
+          statusEl.textContent = 'Done! Key: ' + key + (file.size > MULTIPART_THRESHOLD ? ' (multipart)' : '')
           statusEl.className = 'status success'
           loadFiles(backend)
           setFile(null)
@@ -255,7 +309,7 @@ let server = http.createServer(
     // MinIO API endpoints
     if (url.pathname.startsWith('/api/minio/')) {
       let action = url.pathname.replace('/api/minio/', '')
-      return handleStorageRequest(action, url, minioStorage)
+      return handleStorageRequest(action, url, minioStorage, request)
     }
 
     // AWS API endpoints
@@ -270,14 +324,14 @@ let server = http.createServer(
         )
       }
       let action = url.pathname.replace('/api/aws/', '')
-      return handleStorageRequest(action, url, awsStorage)
+      return handleStorageRequest(action, url, awsStorage, request)
     }
 
     return new Response('Not Found', { status: 404 })
   }),
 )
 
-async function handleStorageRequest(action, url, storage) {
+async function handleStorageRequest(action, url, storage, request) {
   if (action === 'presign') {
     let key = url.searchParams.get('key')
     if (!key) return json({ error: 'Missing key' }, 400)
@@ -295,6 +349,39 @@ async function handleStorageRequest(action, url, storage) {
     if (!key) return json({ error: 'Missing key' }, 400)
     let presignedUrl = await storage.getSignedUrl({ key, method: 'GET', expiresIn: 60 })
     return Response.redirect(presignedUrl, 302)
+  }
+
+  // Multipart upload endpoints
+  if (action === 'multipart/initiate') {
+    let body = await request.json()
+    let { key, totalSize, contentType } = body
+    if (!key || !totalSize) return json({ error: 'Missing key or totalSize' }, 400)
+
+    let result = await storage.initiateMultipartUpload({
+      key,
+      totalSize,
+      contentType: contentType || 'application/octet-stream',
+      expiresIn: 3600, // 1 hour
+    })
+    return json(result)
+  }
+
+  if (action === 'multipart/complete') {
+    let body = await request.json()
+    let { key, uploadId, parts } = body
+    if (!key || !uploadId || !parts) return json({ error: 'Missing key, uploadId, or parts' }, 400)
+
+    await storage.completeMultipartUpload({ key, uploadId, parts })
+    return json({ success: true })
+  }
+
+  if (action === 'multipart/abort') {
+    let body = await request.json()
+    let { key, uploadId } = body
+    if (!key || !uploadId) return json({ error: 'Missing key or uploadId' }, 400)
+
+    await storage.abortMultipartUpload({ key, uploadId })
+    return json({ success: true })
   }
 
   return json({ error: 'Unknown action' }, 404)

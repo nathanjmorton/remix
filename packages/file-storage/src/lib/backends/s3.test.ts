@@ -294,6 +294,154 @@ describe('s3 file storage', async () => {
       assert.equal(parsedMin.searchParams.get('X-Amz-Expires'), '1')
     })
   })
+
+  describe('multipart upload', () => {
+    it('initiates multipart upload and returns presigned URLs for parts', async () => {
+      let totalSize = 15 * 1024 * 1024 // 15MB - will be 3 parts at 5MB each
+      let partSize = 5 * 1024 * 1024 // 5MB
+
+      let result = await storage.initiateMultipartUpload({
+        key: 'multipart-test',
+        totalSize,
+        partSize,
+        contentType: 'application/octet-stream',
+      })
+
+      assert.ok(result.uploadId, 'Should have uploadId')
+      assert.equal(result.key, 'multipart-test')
+      assert.equal(result.parts.length, 3, 'Should have 3 parts')
+
+      // Each part should have correct structure
+      result.parts.forEach((part, index) => {
+        assert.equal(part.partNumber, index + 1, `Part ${index + 1} should have correct partNumber`)
+        assert.ok(part.url, `Part ${index + 1} should have URL`)
+
+        // Verify URL has required query params
+        let parsed = new URL(part.url)
+        assert.ok(parsed.searchParams.has('partNumber'))
+        assert.ok(parsed.searchParams.has('uploadId'))
+        assert.ok(parsed.searchParams.has('X-Amz-Signature'))
+        assert.equal(parsed.searchParams.get('partNumber'), String(index + 1))
+        assert.equal(parsed.searchParams.get('uploadId'), result.uploadId)
+      })
+
+      // Clean up: abort the multipart upload
+      await storage.abortMultipartUpload({ key: 'multipart-test', uploadId: result.uploadId })
+    })
+
+    it('completes multipart upload with uploaded parts', async () => {
+      let partSize = 5 * 1024 * 1024 // 5MB minimum
+      let part1Content = 'A'.repeat(partSize)
+      let part2Content = 'B'.repeat(1024) // Small second part
+      let totalSize = part1Content.length + part2Content.length
+
+      keysToCleanup.push('multipart-complete')
+
+      // Initiate multipart upload
+      let { uploadId, parts } = await storage.initiateMultipartUpload({
+        key: 'multipart-complete',
+        totalSize,
+        partSize,
+        contentType: 'text/plain',
+      })
+
+      assert.equal(parts.length, 2, 'Should have 2 parts')
+
+      // Upload parts via presigned URLs and collect ETags
+      let completedParts: Array<{ partNumber: number; etag: string }> = []
+
+      // Upload part 1
+      let res1 = await fetch(parts[0].url, {
+        method: 'PUT',
+        body: part1Content,
+      })
+      assert.ok(res1.ok, `Part 1 upload failed: ${res1.status}`)
+      let etag1 = res1.headers.get('ETag')
+      assert.ok(etag1, 'Part 1 should have ETag')
+      completedParts.push({ partNumber: 1, etag: etag1 })
+
+      // Upload part 2
+      let res2 = await fetch(parts[1].url, {
+        method: 'PUT',
+        body: part2Content,
+      })
+      assert.ok(res2.ok, `Part 2 upload failed: ${res2.status}`)
+      let etag2 = res2.headers.get('ETag')
+      assert.ok(etag2, 'Part 2 should have ETag')
+      completedParts.push({ partNumber: 2, etag: etag2 })
+
+      // Complete multipart upload
+      await storage.completeMultipartUpload({
+        key: 'multipart-complete',
+        uploadId,
+        parts: completedParts,
+      })
+
+      // Verify the file exists and has correct content
+      let retrieved = await storage.get('multipart-complete')
+      assert.ok(retrieved, 'File should exist after multipart upload')
+
+      let content = await retrieved.text()
+      assert.equal(content, part1Content + part2Content, 'Content should match uploaded parts')
+    })
+
+    it('aborts multipart upload and cleans up parts', async () => {
+      let totalSize = 10 * 1024 * 1024 // 10MB
+      let partSize = 5 * 1024 * 1024 // 5MB
+
+      // Initiate multipart upload
+      let { uploadId, parts } = await storage.initiateMultipartUpload({
+        key: 'multipart-abort',
+        totalSize,
+        partSize,
+      })
+
+      // Upload one part
+      let partContent = 'X'.repeat(partSize)
+      let res = await fetch(parts[0].url, {
+        method: 'PUT',
+        body: partContent,
+      })
+      assert.ok(res.ok, 'Part upload should succeed')
+
+      // Abort the upload
+      await storage.abortMultipartUpload({ key: 'multipart-abort', uploadId })
+
+      // File should not exist
+      let exists = await storage.has('multipart-abort')
+      assert.equal(exists, false, 'File should not exist after abort')
+    })
+
+    it('clamps partSize to minimum 5MB', async () => {
+      let result = await storage.initiateMultipartUpload({
+        key: 'multipart-small-part',
+        totalSize: 10 * 1024 * 1024, // 10MB
+        partSize: 1024, // 1KB - way too small
+      })
+
+      // Should be clamped to 5MB, resulting in 2 parts
+      assert.equal(result.parts.length, 2, 'Should have 2 parts (10MB / 5MB)')
+
+      await storage.abortMultipartUpload({ key: 'multipart-small-part', uploadId: result.uploadId })
+    })
+
+    it('throws error for files requiring more than 10000 parts', async () => {
+      // 5MB parts * 10001 parts = ~50TB
+      let totalSize = 5 * 1024 * 1024 * 10001
+      let partSize = 5 * 1024 * 1024
+
+      await assert.rejects(
+        async () => {
+          await storage.initiateMultipartUpload({
+            key: 'too-many-parts',
+            totalSize,
+            partSize,
+          })
+        },
+        /maximum is 10,000/,
+      )
+    })
+  })
 })
 
 describe('presigned URLs with session token', () => {
