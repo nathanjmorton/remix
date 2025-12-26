@@ -2,26 +2,22 @@
  * S3 Presigned PUT URL Demo
  *
  * This demo shows how to use presigned PUT URLs for direct client-to-S3 uploads.
- * It uses MinIO as a local S3-compatible server.
+ * It always runs MinIO locally, and optionally connects to AWS S3 if env vars are set.
  *
- * Run with:
+ * ## MinIO only:
  * ```sh
- * npx tsx packages/file-storage/demos/s3/presigned-put-url.ts
+ * node packages/file-storage/demos/s3/server.js
+ * ```
+ *
+ * ## MinIO + AWS:
+ * ```sh
+ * AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=us-east-1 S3_BUCKET=my-bucket \
+ *   node packages/file-storage/demos/s3/server.js
  * ```
  *
  * Then open http://localhost:44100 in your browser.
  *
- * ## How it works:
- * 1. User selects a file in the browser
- * 2. Browser requests a presigned PUT URL from the server
- * 3. Server generates the presigned URL using S3FileStorage.getSignedUrl()
- * 4. Browser uploads the file directly to MinIO using the presigned URL
- * 5. Server can later access the file using the storage key
- *
- * ## MinIO Console
- *
- * You can view uploaded files at http://localhost:9001
- * Login: minioadmin / minioadmin
+ * Requires Docker for MinIO. MinIO console at http://localhost:9001 (minioadmin/minioadmin)
  */
 
 import * as http from 'node:http'
@@ -33,7 +29,18 @@ import { cleanupMinio, defaultMinioConfig, setupMinio } from '../../src/lib/test
 
 const PORT = 44100
 
-let storage = createS3FileStorage({
+// Storage instances
+let minioStorage
+let awsStorage = null
+
+// Start MinIO
+let minioAvailable = await setupMinio()
+if (!minioAvailable) {
+  console.error('Failed to start MinIO. Make sure Docker is running.')
+  process.exit(1)
+}
+
+minioStorage = createS3FileStorage({
   bucket: defaultMinioConfig.bucketName,
   endpoint: `http://localhost:${defaultMinioConfig.port}`,
   region: 'us-east-1',
@@ -41,6 +48,30 @@ let storage = createS3FileStorage({
   secretAccessKey: defaultMinioConfig.password,
   prefix: 'uploads',
 })
+
+console.log(`📦 MinIO ready: ${defaultMinioConfig.bucketName}`)
+console.log(`🖥️  MinIO Console: http://localhost:${defaultMinioConfig.consolePort}`)
+
+// Setup AWS if env vars are provided
+let awsEnabled = false
+let awsRegion = 'us-east-1'
+let awsBucket = 'nathanjmorton-s3-test-bucket'
+
+if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+  awsStorage = createS3FileStorage({
+    bucket: awsBucket,
+    endpoint: `https://s3.${awsRegion}.amazonaws.com`,
+    region: awsRegion,
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    sessionToken: process.env.AWS_SESSION_TOKEN,
+    prefix: 'uploads',
+  })
+  awsEnabled = true
+  console.log(`☁️  AWS ready: ${awsBucket} (${awsRegion})`)
+} else {
+  console.log('☁️  AWS not configured (set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)')
+}
 
 function html(content) {
   return new Response(content, {
@@ -59,184 +90,199 @@ let server = http.createServer(
   createRequestListener(async (request) => {
     let url = new URL(request.url)
 
-    // Serve the upload form
+    // Serve the main page
     if (request.method === 'GET' && url.pathname === '/') {
       return html(`<!DOCTYPE html>
 <html>
-  <head>
-    <title>S3 Presigned PUT URL Demo</title>
-    <style>
-      body { font-family: system-ui, sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; }
-      .upload-box { border: 2px dashed #ccc; padding: 2rem; text-align: center; margin: 1rem 0; }
-      .upload-box.dragover { border-color: #007bff; background: #f0f7ff; }
-      button { background: #007bff; color: white; border: none; padding: 0.5rem 1rem; cursor: pointer; }
-      button:disabled { background: #ccc; }
-      #status { margin-top: 1rem; padding: 1rem; border-radius: 4px; }
-      #status.success { background: #d4edda; color: #155724; }
-      #status.error { background: #f8d7da; color: #721c24; }
-      #files { margin-top: 2rem; }
-      #files table { width: 100%; border-collapse: collapse; }
-      #files th, #files td { padding: 0.5rem; text-align: left; border-bottom: 1px solid #ddd; }
-    </style>
-  </head>
-  <body>
-    <h1>S3 Presigned PUT URL Demo</h1>
-    <p>Upload files directly to S3 (MinIO) using presigned PUT URLs.</p>
+<head>
+  <title>S3 Presigned PUT URL Demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    .panels { display: grid; grid-template-columns: ${awsEnabled ? '1fr 1fr' : '1fr'}; gap: 2rem; }
+    .panel { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; }
+    .panel h2 { margin-top: 0; display: flex; align-items: center; gap: 0.5rem; }
+    .panel.minio { border-color: #f6931e; }
+    .panel.aws { border-color: #ff9900; }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: #28a745; }
+    .upload-box { border: 2px dashed #ccc; padding: 1.5rem; text-align: center; margin: 1rem 0; border-radius: 4px; }
+    .upload-box.dragover { border-color: #007bff; background: #f0f7ff; }
+    button { background: #007bff; color: white; border: none; padding: 0.5rem 1rem; cursor: pointer; border-radius: 4px; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    .status { margin-top: 0.5rem; padding: 0.5rem; border-radius: 4px; font-size: 0.9rem; }
+    .status.success { background: #d4edda; color: #155724; }
+    .status.error { background: #f8d7da; color: #721c24; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 1rem; }
+    th, td { padding: 0.4rem; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; }
+  </style>
+</head>
+<body>
+  <h1>S3 Presigned PUT URL Demo</h1>
+  <p>Upload files directly to S3-compatible storage using presigned PUT URLs.</p>
 
-    <div class="upload-box" id="dropzone">
-      <p>Drag and drop a file here, or:</p>
-      <input type="file" id="fileInput" />
-    </div>
-
-    <button id="uploadBtn" disabled>Upload to S3</button>
-    <div id="status"></div>
-
-    <div id="files">
-      <h2>Uploaded Files</h2>
+  <div class="panels">
+    <!-- MinIO Panel -->
+    <div class="panel minio">
+      <h2><span class="status-dot"></span> MinIO (Local)</h2>
+      <p style="font-size: 0.85rem; color: #666;">Console: <a href="http://localhost:9001" target="_blank">localhost:9001</a></p>
+      
+      <div class="upload-box" id="minio-dropzone">
+        <p>Drag & drop or select file</p>
+        <input type="file" id="minio-file" />
+      </div>
+      <button id="minio-upload" disabled>Upload to MinIO</button>
+      <div id="minio-status" class="status" style="display:none;"></div>
+      
       <table>
-        <thead><tr><th>Key</th><th>Name</th><th>Size</th><th>Actions</th></tr></thead>
-        <tbody id="fileList"></tbody>
+        <thead><tr><th>Key</th><th>Size</th><th></th></tr></thead>
+        <tbody id="minio-files"></tbody>
       </table>
     </div>
 
-    <script>
-      let selectedFile = null
-      let fileInput = document.getElementById('fileInput')
-      let uploadBtn = document.getElementById('uploadBtn')
-      let status = document.getElementById('status')
-      let dropzone = document.getElementById('dropzone')
-      let fileList = document.getElementById('fileList')
+    ${awsEnabled ? `<!-- AWS Panel -->
+    <div class="panel aws">
+      <h2><span class="status-dot"></span> AWS S3</h2>
+      <p style="font-size: 0.85rem; color: #666;">Bucket: ${awsBucket} (${awsRegion})</p>
+      
+      <div class="upload-box" id="aws-dropzone">
+        <p>Drag & drop or select file</p>
+        <input type="file" id="aws-file" />
+      </div>
+      <button id="aws-upload" disabled>Upload to AWS</button>
+      <div id="aws-status" class="status" style="display:none;"></div>
+      
+      <table>
+        <thead><tr><th>Key</th><th>Size</th><th></th></tr></thead>
+        <tbody id="aws-files"></tbody>
+      </table>
+    </div>` : ''}
+  </div>
 
-      // Load existing files
-      loadFiles()
+  <script>
+    let minioFile = null
+    setupUploader('minio', () => minioFile, f => minioFile = f)
 
-      fileInput.addEventListener('change', (e) => {
-        selectedFile = e.target.files[0]
-        uploadBtn.disabled = !selectedFile
-      })
+    ${awsEnabled ? `let awsFile = null
+    setupUploader('aws', () => awsFile, f => awsFile = f)` : ''}
 
-      // Drag and drop
-      dropzone.addEventListener('dragover', (e) => {
+    function setupUploader(backend, getFile, setFile) {
+      let dropzone = document.getElementById(backend + '-dropzone')
+      let fileInput = document.getElementById(backend + '-file')
+      let uploadBtn = document.getElementById(backend + '-upload')
+      let statusEl = document.getElementById(backend + '-status')
+
+      fileInput.onchange = e => {
+        setFile(e.target.files[0])
+        uploadBtn.disabled = !getFile()
+      }
+
+      dropzone.ondragover = e => { e.preventDefault(); dropzone.classList.add('dragover') }
+      dropzone.ondragleave = () => dropzone.classList.remove('dragover')
+      dropzone.ondrop = e => {
         e.preventDefault()
-        dropzone.classList.add('dragover')
-      })
-      dropzone.addEventListener('dragleave', () => {
         dropzone.classList.remove('dragover')
-      })
-      dropzone.addEventListener('drop', (e) => {
-        e.preventDefault()
-        dropzone.classList.remove('dragover')
-        selectedFile = e.dataTransfer.files[0]
+        setFile(e.dataTransfer.files[0])
         fileInput.files = e.dataTransfer.files
-        uploadBtn.disabled = !selectedFile
-      })
+        uploadBtn.disabled = !getFile()
+      }
 
-      uploadBtn.addEventListener('click', async () => {
-        if (!selectedFile) return
-
+      uploadBtn.onclick = async () => {
+        let file = getFile()
+        if (!file) return
         uploadBtn.disabled = true
-        status.textContent = 'Getting presigned URL...'
-        status.className = ''
+        statusEl.style.display = 'block'
+        statusEl.className = 'status'
+        statusEl.textContent = 'Getting presigned URL...'
 
         try {
-          // Step 1: Get presigned PUT URL from server
           let key = 'file-' + Date.now()
-          let res = await fetch('/presign?key=' + encodeURIComponent(key) + '&filename=' + encodeURIComponent(selectedFile.name) + '&contentType=' + encodeURIComponent(selectedFile.type))
+          let res = await fetch('/api/' + backend + '/presign?key=' + encodeURIComponent(key))
           if (!res.ok) throw new Error('Failed to get presigned URL')
           let { url } = await res.json()
 
-          status.textContent = 'Uploading to S3...'
-
-          // Step 2: Upload directly to S3 using presigned URL
+          statusEl.textContent = 'Uploading...'
           let uploadRes = await fetch(url, {
             method: 'PUT',
-            body: selectedFile,
-            headers: {
-              'Content-Type': selectedFile.type || 'application/octet-stream',
-            },
+            body: file,
+            headers: { 'Content-Type': file.type || 'application/octet-stream' }
           })
-
           if (!uploadRes.ok) throw new Error('Upload failed: ' + uploadRes.status)
 
-          status.textContent = 'Upload complete! File key: ' + key
-          status.className = 'success'
-
-          // Refresh file list
-          loadFiles()
-
-          // Reset
-          selectedFile = null
+          statusEl.textContent = 'Done! Key: ' + key
+          statusEl.className = 'status success'
+          loadFiles(backend)
+          setFile(null)
           fileInput.value = ''
           uploadBtn.disabled = true
         } catch (err) {
-          status.textContent = 'Error: ' + err.message
-          status.className = 'error'
+          statusEl.textContent = 'Error: ' + err.message
+          statusEl.className = 'status error'
           uploadBtn.disabled = false
         }
-      })
-
-      async function loadFiles() {
-        try {
-          let res = await fetch('/files')
-          let { files } = await res.json()
-          fileList.innerHTML = files.map(f =>
-            '<tr>' +
-              '<td>' + f.key + '</td>' +
-              '<td>' + (f.name || '-') + '</td>' +
-              '<td>' + (f.size ? Math.round(f.size / 1024) + ' KB' : '-') + '</td>' +
-              '<td><a href="/download?key=' + encodeURIComponent(f.key) + '" target="_blank">Download</a></td>' +
-            '</tr>'
-          ).join('')
-        } catch (err) {
-          console.error('Failed to load files:', err)
-        }
       }
-    </script>
-  </body>
+    }
+
+    async function loadFiles(backend) {
+      try {
+        let res = await fetch('/api/' + backend + '/files')
+        if (!res.ok) return
+        let { files } = await res.json()
+        document.getElementById(backend + '-files').innerHTML = files.map(f =>
+          '<tr><td>' + f.key + '</td><td>' + (f.size ? Math.round(f.size/1024) + 'KB' : '-') + '</td>' +
+          '<td><a href="/api/' + backend + '/download?key=' + encodeURIComponent(f.key) + '" target="_blank">↓</a></td></tr>'
+        ).join('')
+      } catch (e) { console.error(e) }
+    }
+
+    loadFiles('minio')
+    ${awsEnabled ? "loadFiles('aws')" : ''}
+  </script>
+</body>
 </html>`)
     }
 
-    // Generate presigned PUT URL
-    if (request.method === 'GET' && url.pathname === '/presign') {
-      let key = url.searchParams.get('key')
-      if (!key) {
-        return json({ error: 'Missing key parameter' }, 400)
-      }
-
-      let presignedUrl = await storage.getSignedUrl({
-        key,
-        method: 'PUT',
-        expiresIn: 300, // 5 minutes
-      })
-
-      return json({ url: presignedUrl, key })
+    // MinIO API endpoints
+    if (url.pathname.startsWith('/api/minio/')) {
+      let action = url.pathname.replace('/api/minio/', '')
+      return handleStorageRequest(action, url, minioStorage)
     }
 
-    // List files
-    if (request.method === 'GET' && url.pathname === '/files') {
-      let { files } = await storage.list({ includeMetadata: true })
-      return json({ files })
-    }
-
-    // Download file using presigned GET URL
-    if (request.method === 'GET' && url.pathname === '/download') {
-      let key = url.searchParams.get('key')
-      if (!key) {
-        return json({ error: 'Missing key parameter' }, 400)
+    // AWS API endpoints
+    if (url.pathname.startsWith('/api/aws/')) {
+      if (!awsStorage) {
+        return json({ error: 'AWS not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET env vars.' }, 400)
       }
-
-      let presignedUrl = await storage.getSignedUrl({
-        key,
-        method: 'GET',
-        expiresIn: 60,
-      })
-
-      return Response.redirect(presignedUrl, 302)
+      let action = url.pathname.replace('/api/aws/', '')
+      return handleStorageRequest(action, url, awsStorage)
     }
 
     return new Response('Not Found', { status: 404 })
   }),
 )
+
+async function handleStorageRequest(action, url, storage) {
+  if (action === 'presign') {
+    let key = url.searchParams.get('key')
+    if (!key) return json({ error: 'Missing key' }, 400)
+    let presignedUrl = await storage.getSignedUrl({ key, method: 'PUT', expiresIn: 300 })
+    return json({ url: presignedUrl, key })
+  }
+
+  if (action === 'files') {
+    let { files } = await storage.list({ includeMetadata: true })
+    return json({ files })
+  }
+
+  if (action === 'download') {
+    let key = url.searchParams.get('key')
+    if (!key) return json({ error: 'Missing key' }, 400)
+    let presignedUrl = await storage.getSignedUrl({ key, method: 'GET', expiresIn: 60 })
+    return Response.redirect(presignedUrl, 302)
+  }
+
+  return json({ error: 'Unknown action' }, 404)
+}
 
 // Handle clean shutdown
 process.on('SIGINT', async () => {
@@ -252,17 +298,6 @@ process.on('SIGTERM', async () => {
   process.exit(0)
 })
 
-// Start MinIO and server
-let available = await setupMinio()
-if (!available) {
-  console.error('Failed to start MinIO. Make sure Docker is running.')
-  process.exit(1)
-}
-
-console.log('✅ MinIO is ready')
-console.log(`📦 Bucket: ${defaultMinioConfig.bucketName}`)
-console.log(`🖥️  MinIO Console: http://localhost:${defaultMinioConfig.consolePort}`)
-
 server.listen(PORT, () => {
-  console.log(`\n🚀 Server listening on http://localhost:${PORT}`)
+  console.log(`🚀 Server listening on http://localhost:${PORT}`)
 })

@@ -31,12 +31,12 @@ export interface MinioConfig {
 }
 
 export let defaultMinioConfig: MinioConfig = {
-  containerName: 'minio-test',
+  containerName: 'minio',
   port: 9000,
   consolePort: 9001,
   user: 'minioadmin',
   password: 'minioadmin',
-  bucketName: 'test-bucket',
+  bucketName: 'nathanjmorton-s3-test-bucket',
 }
 
 export async function isDockerAvailable(): Promise<boolean> {
