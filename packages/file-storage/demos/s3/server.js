@@ -11,7 +11,7 @@
  *
  * ## MinIO + AWS:
  * ```sh
- * AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=us-east-1 S3_BUCKET=my-bucket \
+ * AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... \
  *   node packages/file-storage/demos/s3/server.js
  * ```
  *
@@ -70,7 +70,9 @@ if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
   awsEnabled = true
   console.log(`☁️  AWS ready: ${awsBucket} (${awsRegion})`)
 } else {
-  console.log('☁️  AWS not configured (set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)')
+  console.log(
+    '☁️  AWS not configured (set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN if using sso)',
+  )
 }
 
 function html(content) {
@@ -140,7 +142,9 @@ let server = http.createServer(
       </table>
     </div>
 
-    ${awsEnabled ? `<!-- AWS Panel -->
+    ${
+      awsEnabled
+        ? `<!-- AWS Panel -->
     <div class="panel aws">
       <h2><span class="status-dot"></span> AWS S3</h2>
       <p style="font-size: 0.85rem; color: #666;">Bucket: ${awsBucket} (${awsRegion})</p>
@@ -156,15 +160,21 @@ let server = http.createServer(
         <thead><tr><th>Key</th><th>Size</th><th></th></tr></thead>
         <tbody id="aws-files"></tbody>
       </table>
-    </div>` : ''}
+    </div>`
+        : ''
+    }
   </div>
 
   <script>
     let minioFile = null
     setupUploader('minio', () => minioFile, f => minioFile = f)
 
-    ${awsEnabled ? `let awsFile = null
-    setupUploader('aws', () => awsFile, f => awsFile = f)` : ''}
+    ${
+      awsEnabled
+        ? `let awsFile = null
+    setupUploader('aws', () => awsFile, f => awsFile = f)`
+        : ''
+    }
 
     function setupUploader(backend, getFile, setFile) {
       let dropzone = document.getElementById(backend + '-dropzone')
@@ -251,7 +261,13 @@ let server = http.createServer(
     // AWS API endpoints
     if (url.pathname.startsWith('/api/aws/')) {
       if (!awsStorage) {
-        return json({ error: 'AWS not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET env vars.' }, 400)
+        return json(
+          {
+            error:
+              'AWS not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET env vars.',
+          },
+          400,
+        )
       }
       let action = url.pathname.replace('/api/aws/', '')
       return handleStorageRequest(action, url, awsStorage)
