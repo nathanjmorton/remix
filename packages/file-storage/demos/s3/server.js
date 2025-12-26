@@ -264,7 +264,7 @@ let server = http.createServer(
         return json(
           {
             error:
-              'AWS not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET env vars.',
+              'AWS not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, optionally AWS_SESSION_TOKEN env vars.',
           },
           400,
         )
