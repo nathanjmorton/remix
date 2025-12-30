@@ -10,7 +10,11 @@ import homeController from './home.tsx'
 import authController from './auth.tsx'
 import filesController from './files.tsx'
 
-let middleware = [formData(), session(sessionCookie, sessionStorage), asyncContext()]
+let middleware = [
+  formData({ maxFileSize: 100 * 1024 * 1024 }), // 100 MiB
+  session(sessionCookie, sessionStorage),
+  asyncContext(),
+]
 
 export let router = createRouter({ middleware })
 

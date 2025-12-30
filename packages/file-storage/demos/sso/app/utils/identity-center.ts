@@ -1,9 +1,19 @@
 /**
- * AWS STS utilities for assuming roles with web identity tokens.
+ * AWS S3 Access Grants utilities using IAM Identity Center Trusted Identity Propagation.
  *
- * This module uses STS AssumeRoleWithWebIdentity to exchange an Auth0 JWT
- * for temporary AWS credentials that can be used to access S3.
+ * This module implements the flow:
+ * 1. Exchange Auth0 JWT for Identity Center token (CreateTokenWithIAM)
+ * 2. Assume role with identity context (AssumeRole with ProvidedContexts)
+ * 3. Get S3 credentials from Access Grants (GetDataAccess)
  */
+
+import {
+  SSOOIDCClient,
+  CreateTokenWithIAMCommand,
+  type CreateTokenWithIAMCommandOutput,
+} from '@aws-sdk/client-sso-oidc'
+import { STSClient, AssumeRoleCommand, type Credentials } from '@aws-sdk/client-sts'
+import { S3ControlClient, GetDataAccessCommand } from '@aws-sdk/client-s3-control'
 
 export interface AwsCredentials {
   accessKeyId: string
@@ -12,76 +22,225 @@ export interface AwsCredentials {
   expiration: Date
 }
 
-export interface AssumeRoleConfig {
-  roleArn: string
+export interface S3AccessGrantsConfig {
   region: string
+  identityCenterApplicationArn: string
+  identityBearerRoleArn: string
+  accountId: string
+  s3Prefix: string
 }
 
-export function getAssumeRoleConfig(): AssumeRoleConfig {
+export function getS3AccessGrantsConfig(): S3AccessGrantsConfig {
   return {
-    roleArn: process.env.AWS_ROLE_ARN || 'arn:aws:iam::073343495859:role/Auth0-S3-Access',
     region: process.env.AWS_REGION || 'us-east-1',
+    identityCenterApplicationArn:
+      process.env.IDC_APPLICATION_ARN ||
+      'arn:aws:sso::073343495859:application/ssoins-72235fb3eb13c6e1/apl-72233601699985f9',
+    identityBearerRoleArn:
+      process.env.IDENTITY_BEARER_ROLE_ARN ||
+      'arn:aws:iam::073343495859:role/S3AccessGrantsIdentityBearerRole',
+    accountId: process.env.AWS_ACCOUNT_ID || '073343495859',
+    s3Prefix: process.env.S3_PREFIX || 's3://nathanjmorton-s3-test-bucket/sso-demo/*',
   }
 }
 
 /**
- * Exchange an Auth0 access token for temporary AWS credentials.
+ * Step 1: Exchange Auth0 JWT for IAM Identity Center token.
  *
- * Uses STS AssumeRoleWithWebIdentity to assume the configured IAM role
- * using the Auth0 JWT as proof of identity.
+ * This calls the sso-oidc:CreateTokenWithIAM API with the JWT Bearer grant type
+ * to exchange the Auth0 token for an Identity Center token.
  */
-export async function assumeRoleWithWebIdentity(
-  config: AssumeRoleConfig,
+export async function exchangeTokenWithIdentityCenter(
+  config: S3AccessGrantsConfig,
   auth0Token: string,
-  sessionName?: string,
-): Promise<AwsCredentials> {
-  let stsEndpoint = `https://sts.${config.region}.amazonaws.com`
+): Promise<CreateTokenWithIAMCommandOutput> {
+  // Log the JWT payload for debugging
+  let jwtPayload = decodeJwtPayload(auth0Token)
+  console.log('Auth0 JWT payload:', JSON.stringify(jwtPayload, null, 2))
 
-  let params = new URLSearchParams({
-    Action: 'AssumeRoleWithWebIdentity',
-    Version: '2011-06-15',
-    RoleArn: config.roleArn,
-    RoleSessionName: sessionName || `auth0-session-${Date.now()}`,
-    WebIdentityToken: auth0Token,
-    DurationSeconds: '3600', // 1 hour
+  let client = new SSOOIDCClient({ region: config.region })
+
+  let command = new CreateTokenWithIAMCommand({
+    clientId: config.identityCenterApplicationArn,
+    grantType: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    assertion: auth0Token,
   })
 
-  let response = await fetch(stsEndpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: params.toString(),
-  })
+  try {
+    return await client.send(command)
+  } catch (error) {
+    console.error('CreateTokenWithIAM error:', error)
+    if (error instanceof Error) {
+      throw new Error(`CreateTokenWithIAM failed: ${error.name} - ${error.message}`)
+    }
+    throw error
+  }
+}
 
-  let text = await response.text()
+/**
+ * Decode a JWT payload without verification.
+ */
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  let parts = token.split('.')
+  if (parts.length !== 3) throw new Error('Invalid JWT format')
+  let payload = Buffer.from(parts[1], 'base64url').toString('utf-8')
+  return JSON.parse(payload)
+}
 
-  if (!response.ok) {
-    // Parse error from XML response
-    let errorMatch = text.match(/<Message>([^<]+)<\/Message>/)
-    let errorMessage = errorMatch ? errorMatch[1] : text
-    throw new Error(`AssumeRoleWithWebIdentity failed: ${errorMessage}`)
+/**
+ * Step 2: Assume the Identity Bearer role with the identity context.
+ *
+ * This calls sts:AssumeRole with the ProvidedContexts parameter to
+ * attach the user's identity from Identity Center to the role session.
+ */
+export async function assumeRoleWithIdentityContext(
+  config: S3AccessGrantsConfig,
+  identityCenterToken: string,
+): Promise<Credentials> {
+  // Decode the Identity Center token to get the identity context
+  let tokenPayload = decodeJwtPayload(identityCenterToken)
+  let identityContext = tokenPayload['sts:identity_context'] as string
+
+  if (!identityContext) {
+    throw new Error('Identity Center token missing sts:identity_context claim')
   }
 
-  // Parse credentials from XML response
-  let accessKeyId = extractXmlValue(text, 'AccessKeyId')
-  let secretAccessKey = extractXmlValue(text, 'SecretAccessKey')
-  let sessionToken = extractXmlValue(text, 'SessionToken')
-  let expiration = extractXmlValue(text, 'Expiration')
+  let client = new STSClient({ region: config.region })
 
-  if (!accessKeyId || !secretAccessKey || !sessionToken) {
-    throw new Error('Failed to parse credentials from STS response')
+  let command = new AssumeRoleCommand({
+    RoleArn: config.identityBearerRoleArn,
+    RoleSessionName: `s3-access-grants-${Date.now()}`,
+    ProvidedContexts: [
+      {
+        ProviderArn: 'arn:aws:iam::aws:contextProvider/IdentityCenter',
+        ContextAssertion: identityContext,
+      },
+    ],
+  })
+
+  let response = await client.send(command)
+
+  if (!response.Credentials) {
+    throw new Error('AssumeRole did not return credentials')
+  }
+
+  return response.Credentials
+}
+
+/**
+ * Step 3: Get S3 credentials from Access Grants.
+ *
+ * This calls s3:GetDataAccess with the identity-enhanced credentials
+ * to get temporary S3 credentials scoped to the user's grants.
+ */
+export async function getS3DataAccess(
+  config: S3AccessGrantsConfig,
+  identityBearerCredentials: Credentials,
+  permission: 'READ' | 'WRITE' | 'READWRITE' = 'READWRITE',
+): Promise<AwsCredentials> {
+  let client = new S3ControlClient({
+    region: config.region,
+    credentials: {
+      accessKeyId: identityBearerCredentials.AccessKeyId!,
+      secretAccessKey: identityBearerCredentials.SecretAccessKey!,
+      sessionToken: identityBearerCredentials.SessionToken,
+      expiration: identityBearerCredentials.Expiration,
+    },
+  })
+
+  let command = new GetDataAccessCommand({
+    AccountId: config.accountId,
+    Target: config.s3Prefix,
+    Permission: permission,
+  })
+
+  let response = await client.send(command)
+
+  if (!response.Credentials) {
+    throw new Error('GetDataAccess did not return credentials')
   }
 
   return {
-    accessKeyId,
-    secretAccessKey,
-    sessionToken,
-    expiration: new Date(expiration),
+    accessKeyId: response.Credentials.AccessKeyId!,
+    secretAccessKey: response.Credentials.SecretAccessKey!,
+    sessionToken: response.Credentials.SessionToken!,
+    expiration: new Date(response.Credentials.Expiration!),
   }
 }
 
-function extractXmlValue(xml: string, tag: string): string {
-  let match = xml.match(new RegExp(`<${tag}>([^<]+)</${tag}>`))
-  return match ? match[1] : ''
+/**
+ * Complete flow: Exchange Auth0 token for S3 credentials via Access Grants.
+ *
+ * This orchestrates the full flow:
+ * 1. Exchange Auth0 JWT for Identity Center token
+ * 2. Assume Identity Bearer role with identity context
+ * 3. Get S3 credentials from Access Grants
+ *
+ * Returns both:
+ * - credentials: Access Grants credentials for object operations (get/put/delete)
+ * - listCredentials: Identity Bearer credentials for listing (has s3:ListBucket)
+ */
+export async function getS3CredentialsViaAccessGrants(
+  config: S3AccessGrantsConfig,
+  auth0Token: string,
+): Promise<{
+  credentials: AwsCredentials
+  listCredentials: AwsCredentials
+  matchedGrantTarget: string | undefined
+}> {
+  // Step 1: Exchange Auth0 token for Identity Center token
+  let tokenResponse = await exchangeTokenWithIdentityCenter(config, auth0Token)
+
+  if (!tokenResponse.idToken) {
+    throw new Error('CreateTokenWithIAM did not return an idToken')
+  }
+
+  // Step 2: Assume role with identity context
+  let identityBearerCreds = await assumeRoleWithIdentityContext(config, tokenResponse.idToken)
+
+  // Convert identity bearer creds to AwsCredentials format (for listing)
+  let listCredentials: AwsCredentials = {
+    accessKeyId: identityBearerCreds.AccessKeyId!,
+    secretAccessKey: identityBearerCreds.SecretAccessKey!,
+    sessionToken: identityBearerCreds.SessionToken!,
+    expiration: new Date(identityBearerCreds.Expiration!),
+  }
+
+  // Step 3: Get S3 credentials from Access Grants
+  let client = new S3ControlClient({
+    region: config.region,
+    credentials: {
+      accessKeyId: identityBearerCreds.AccessKeyId!,
+      secretAccessKey: identityBearerCreds.SecretAccessKey!,
+      sessionToken: identityBearerCreds.SessionToken,
+      expiration: identityBearerCreds.Expiration,
+    },
+  })
+
+  let command = new GetDataAccessCommand({
+    AccountId: config.accountId,
+    Target: config.s3Prefix,
+    Permission: 'READWRITE',
+  })
+
+  let response = await client.send(command)
+
+  if (!response.Credentials) {
+    throw new Error('GetDataAccess did not return credentials')
+  }
+
+  return {
+    credentials: {
+      accessKeyId: response.Credentials.AccessKeyId!,
+      secretAccessKey: response.Credentials.SecretAccessKey!,
+      sessionToken: response.Credentials.SessionToken!,
+      expiration: new Date(response.Credentials.Expiration!),
+    },
+    listCredentials,
+    matchedGrantTarget: response.MatchedGrantTarget,
+  }
 }
+
+// Legacy exports for backward compatibility
+export { getS3AccessGrantsConfig as getAssumeRoleConfig }
+export { getS3CredentialsViaAccessGrants as assumeRoleWithWebIdentity }

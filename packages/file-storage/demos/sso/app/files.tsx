@@ -6,10 +6,41 @@ import { routes } from './routes.ts'
 import { Layout, Document } from './layout.tsx'
 import { render } from './utils/render.ts'
 import {
-  getAssumeRoleConfig,
-  assumeRoleWithWebIdentity,
+  getS3AccessGrantsConfig,
+  getS3CredentialsViaAccessGrants,
   type AwsCredentials,
 } from './utils/identity-center.ts'
+
+// Cache AWS credentials per user session to avoid re-redeeming the JWT
+// Key: user sub, Value: { credentials, listCredentials, matchedGrantTarget }
+let awsCredentialsCache = new Map<
+  string,
+  { credentials: AwsCredentials; listCredentials: AwsCredentials; matchedGrantTarget: string | undefined }
+>()
+
+// Buffer time before expiration to refresh credentials (5 minutes)
+let CREDENTIAL_REFRESH_BUFFER_MS = 5 * 60 * 1000
+
+function getCachedCredentials(userSub: string) {
+  let cached = awsCredentialsCache.get(userSub)
+  if (!cached) return null
+
+  // Check if credentials are expired or about to expire
+  let expirationTime = cached.credentials.expiration.getTime()
+  if (Date.now() + CREDENTIAL_REFRESH_BUFFER_MS >= expirationTime) {
+    awsCredentialsCache.delete(userSub)
+    return null
+  }
+
+  return cached
+}
+
+function setCachedCredentials(
+  userSub: string,
+  result: { credentials: AwsCredentials; listCredentials: AwsCredentials; matchedGrantTarget: string | undefined },
+) {
+  awsCredentialsCache.set(userSub, result)
+}
 
 let S3_BUCKET = 'nathanjmorton-s3-test-bucket'
 let S3_REGION = 'us-east-1'
@@ -51,31 +82,45 @@ export default {
     // List files page
     async index({ session }) {
       let user = session.get('user') as User | null
-      let accessToken = session.get('access_token') as string | null
+      let idToken = session.get('id_token') as string | null
 
       // Require authentication
-      if (!user || !accessToken) {
+      if (!user || !idToken) {
         return redirect(routes.auth.login.href())
       }
 
-      // Try to get AWS credentials
+      // Try to get AWS credentials via S3 Access Grants (with caching)
       let awsCredentials: AwsCredentials | null = null
+      let listCredentials: AwsCredentials | null = null
       let awsError: string | null = null
+      let matchedGrantTarget: string | undefined
 
-      try {
-        let config = getAssumeRoleConfig()
-        awsCredentials = await assumeRoleWithWebIdentity(config, accessToken)
-      } catch (error) {
-        awsError = error instanceof Error ? error.message : 'Unknown error'
+      // Check cache first
+      let cached = getCachedCredentials(user.sub)
+      if (cached) {
+        awsCredentials = cached.credentials
+        listCredentials = cached.listCredentials
+        matchedGrantTarget = cached.matchedGrantTarget
+      } else {
+        try {
+          let config = getS3AccessGrantsConfig()
+          let result = await getS3CredentialsViaAccessGrants(config, idToken)
+          awsCredentials = result.credentials
+          listCredentials = result.listCredentials
+          matchedGrantTarget = result.matchedGrantTarget
+          setCachedCredentials(user.sub, result)
+        } catch (error) {
+          awsError = error instanceof Error ? error.message : 'Unknown error'
+        }
       }
 
-      // List files if we have credentials
+      // List files using listCredentials (Identity Bearer role has s3:ListBucket)
       let files: { key: string; size?: number; lastModified?: number }[] = []
       let listError: string | null = null
 
-      if (awsCredentials) {
+      if (listCredentials) {
         try {
-          let storage = createStorageWithCredentials(awsCredentials)
+          let storage = createStorageWithCredentials(listCredentials)
           let result = await storage.list({ includeMetadata: true })
           files = result.files
         } catch (error) {
@@ -93,16 +138,23 @@ export default {
           </div>
 
           <div class="card">
-            <h3>AWS Credentials</h3>
+            <h3>S3 Access Grants</h3>
             {awsCredentials ? (
               <>
                 <div class="alert alert-success">
-                  ✓ Authenticated via Auth0 → STS AssumeRoleWithWebIdentity
+                  ✓ Authenticated via Auth0 → Identity Center → S3 Access Grants
                 </div>
                 <p style="margin: 0.5rem 0; font-size: 0.85rem; color: #666;">
-                  Access Key: <code>{awsCredentials.accessKeyId}</code> • 
+                  Access Key: <code>{awsCredentials.accessKeyId}</code>
+                </p>
+                <p style="margin: 0.5rem 0; font-size: 0.85rem; color: #666;">
                   Expires: {awsCredentials.expiration.toISOString()}
                 </p>
+                {matchedGrantTarget ? (
+                  <p style="margin: 0.5rem 0; font-size: 0.85rem; color: #666;">
+                    Grant: <code>{matchedGrantTarget}</code>
+                  </p>
+                ) : null}
               </>
             ) : (
               <div class="alert alert-error">
@@ -177,9 +229,9 @@ export default {
           ) : null}
 
           <details style="margin-top: 1rem;">
-            <summary style="cursor: pointer; color: #666;">Debug: Auth0 Token</summary>
+            <summary style="cursor: pointer; color: #666;">Debug: Auth0 ID Token</summary>
             <pre style="word-break: break-all; white-space: pre-wrap; font-size: 0.75rem; margin-top: 0.5rem; background: #f5f5f5; padding: 1rem; border-radius: 4px;">
-              <code>{JSON.stringify(decodeJwtPayload(accessToken), null, 2)}</code>
+              <code>{JSON.stringify(decodeJwtPayload(idToken), null, 2)}</code>
             </pre>
           </details>
         </Layout>,
@@ -189,9 +241,9 @@ export default {
     // Handle file upload
     async upload({ session, formData }) {
       let user = session.get('user') as User | null
-      let accessToken = session.get('access_token') as string | null
+      let idToken = session.get('id_token') as string | null
 
-      if (!user || !accessToken) {
+      if (!user || !idToken) {
         return redirect(routes.auth.login.href())
       }
 
@@ -216,8 +268,17 @@ export default {
       }
 
       try {
-        let config = getAssumeRoleConfig()
-        let credentials = await assumeRoleWithWebIdentity(config, accessToken)
+        // Check cache first
+        let cached = getCachedCredentials(user.sub)
+        let credentials: AwsCredentials
+        if (cached) {
+          credentials = cached.credentials
+        } else {
+          let config = getS3AccessGrantsConfig()
+          let result = await getS3CredentialsViaAccessGrants(config, idToken)
+          credentials = result.credentials
+          setCachedCredentials(user.sub, result)
+        }
         let storage = createStorageWithCredentials(credentials)
 
         let key = `${Date.now()}-${file.name}`
@@ -249,9 +310,9 @@ export default {
     // Handle file download
     async download({ session, url }) {
       let user = session.get('user') as User | null
-      let accessToken = session.get('access_token') as string | null
+      let idToken = session.get('id_token') as string | null
 
-      if (!user || !accessToken) {
+      if (!user || !idToken) {
         return redirect(routes.auth.login.href())
       }
 
@@ -261,8 +322,17 @@ export default {
       }
 
       try {
-        let config = getAssumeRoleConfig()
-        let credentials = await assumeRoleWithWebIdentity(config, accessToken)
+        // Check cache first
+        let cached = getCachedCredentials(user.sub)
+        let credentials: AwsCredentials
+        if (cached) {
+          credentials = cached.credentials
+        } else {
+          let config = getS3AccessGrantsConfig()
+          let result = await getS3CredentialsViaAccessGrants(config, idToken)
+          credentials = result.credentials
+          setCachedCredentials(user.sub, result)
+        }
         let storage = createStorageWithCredentials(credentials)
 
         let signedUrl = await storage.getSignedUrl({ key, method: 'GET', expiresIn: 60 })
