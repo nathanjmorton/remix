@@ -220,6 +220,17 @@ export default {
                 {listError ? (
                   <div class="alert alert-error">{listError}</div>
                 ) : null}
+                {files.length > 0 ? (
+                  <div style="margin-bottom: 1rem;">
+                    <button
+                      id="delete-all-btn"
+                      class="btn btn-danger"
+                      style="font-size: 0.85rem;"
+                    >
+                      Delete All Files
+                    </button>
+                  </div>
+                ) : null}
                 <table>
                   <thead>
                     <tr>
@@ -232,11 +243,11 @@ export default {
                   <tbody id="files-tbody">
                     {files.length > 0 ? (
                       files.map((file) => (
-                        <tr>
+                        <tr data-key={file.key}>
                           <td>{file.key}</td>
                           <td>{file.size ? `${Math.round(file.size / 1024)} KB` : '-'}</td>
                           <td>{file.lastModified ? new Date(file.lastModified).toLocaleDateString() : '-'}</td>
-                          <td>
+                          <td style="display: flex; gap: 0.5rem;">
                             <a
                               href={routes.files.download.href() + `?key=${encodeURIComponent(file.key)}`}
                               class="btn btn-secondary"
@@ -244,6 +255,13 @@ export default {
                             >
                               Download
                             </a>
+                            <button
+                              class="btn btn-danger delete-btn"
+                              style="padding: 0.25rem 0.5rem; font-size: 0.85rem;"
+                              data-key={file.key}
+                            >
+                              Delete
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -401,6 +419,56 @@ export default {
                       uploadBtn.disabled = false;
                     }
                   };
+
+                  // Delete single file
+                  async function deleteFile(key) {
+                    if (!confirm('Delete "' + key + '"?')) return;
+                    try {
+                      let res = await fetch('${routes.files.delete.href()}', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key: key })
+                      });
+                      if (!res.ok) {
+                        let err = await res.json();
+                        throw new Error(err.error || 'Delete failed');
+                      }
+                      window.location.reload();
+                    } catch (err) {
+                      showStatus('Error: ' + err.message, true);
+                    }
+                  }
+
+                  // Attach delete handlers to buttons
+                  document.querySelectorAll('.delete-btn').forEach(function(btn) {
+                    btn.onclick = function() {
+                      deleteFile(btn.getAttribute('data-key'));
+                    };
+                  });
+
+                  // Delete all files
+                  let deleteAllBtn = document.getElementById('delete-all-btn');
+                  if (deleteAllBtn) {
+                    deleteAllBtn.onclick = async function() {
+                      if (!confirm('Delete ALL files? This cannot be undone.')) return;
+                      deleteAllBtn.disabled = true;
+                      try {
+                        let res = await fetch('${routes.files.delete.href()}', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ all: true })
+                        });
+                        if (!res.ok) {
+                          let err = await res.json();
+                          throw new Error(err.error || 'Delete all failed');
+                        }
+                        window.location.reload();
+                      } catch (err) {
+                        showStatus('Error: ' + err.message, true);
+                        deleteAllBtn.disabled = false;
+                      }
+                    };
+                  }
                 })();
               `} />
             </>
@@ -485,6 +553,53 @@ export default {
           </Document>,
           { status: 500 },
         )
+      }
+    },
+
+    // Handle file delete (single or all)
+    async delete({ session, request }) {
+      let user = session.get('user') as User | null
+      let idToken = session.get('id_token') as string | null
+
+      if (!user || !idToken) {
+        return json({ error: 'Unauthorized' }, 401)
+      }
+
+      try {
+        let body = await request.json()
+        let { key, all } = body as { key?: string; all?: boolean }
+
+        let cached = getCachedCredentials(user.sub)
+        let credentials: AwsCredentials
+        let identityStoreUserId: string
+        if (cached) {
+          credentials = cached.credentials
+          identityStoreUserId = cached.identityStoreUserId
+        } else {
+          let config = getS3AccessGrantsConfig()
+          let result = await getS3CredentialsViaAccessGrants(config, idToken)
+          credentials = result.credentials
+          identityStoreUserId = result.identityStoreUserId
+          setCachedCredentials(user.sub, result)
+        }
+        let storage = createStorageWithCredentials(credentials, identityStoreUserId)
+
+        if (all) {
+          // Delete all files
+          let { files } = await storage.list()
+          for (let file of files) {
+            await storage.remove(file.key)
+          }
+          return json({ success: true, deleted: files.length })
+        } else if (key) {
+          // Delete single file
+          await storage.remove(key)
+          return json({ success: true })
+        } else {
+          return json({ error: 'Missing key or all parameter' }, 400)
+        }
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : 'Delete failed' }, 500)
       }
     },
 
