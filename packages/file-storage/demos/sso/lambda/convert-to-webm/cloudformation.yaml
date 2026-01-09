@@ -1,0 +1,171 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Lambda function and IAM roles for video conversion to WebM via MediaConvert'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Default: nathanjmorton-s3-test-bucket
+    Description: S3 bucket for source and destination files
+
+  MediaConvertEndpoint:
+    Type: String
+    Default: https://mediaconvert.us-east-1.amazonaws.com
+    Description: MediaConvert endpoint URL for the region
+
+  WebhookEndpoint:
+    Type: String
+    Description: HTTPS endpoint for SNS to deliver MediaConvert status notifications (e.g. https://your-app.com/files/convert/webhook)
+
+Resources:
+  # IAM Role for MediaConvert to access S3
+  MediaConvertRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: MediaConvertS3AccessRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: mediaconvert.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: MediaConvertS3Policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Read source files
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
+              # Write output files
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
+
+  # IAM Role for Lambda execution
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ConvertToWebmLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: MediaConvertJobPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Create MediaConvert jobs
+              - Effect: Allow
+                Action:
+                  - mediaconvert:CreateJob
+                  - mediaconvert:GetJob
+                  - mediaconvert:DescribeEndpoints
+                Resource: '*'
+              # Pass the MediaConvert role
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt MediaConvertRole.Arn
+
+  # SNS Topic for MediaConvert job notifications
+  MediaConvertNotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: mediaconvert-job-notifications
+
+  # SNS Subscription to deliver to your webhook
+  MediaConvertWebhookSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref MediaConvertNotificationsTopic
+      Protocol: https
+      Endpoint: !Ref WebhookEndpoint
+      # Raw message delivery sends just the EventBridge event, not wrapped in SNS envelope
+      RawMessageDelivery: true
+
+  # EventBridge rule to capture MediaConvert job state changes
+  MediaConvertJobStateRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: mediaconvert-job-state-changes
+      Description: Capture MediaConvert job state changes
+      EventPattern:
+        source:
+          - aws.mediaconvert
+        detail-type:
+          - MediaConvert Job State Change
+      State: ENABLED
+      Targets:
+        - Id: SNSTarget
+          Arn: !Ref MediaConvertNotificationsTopic
+
+  # Allow EventBridge to publish to SNS
+  EventBridgeToSNSPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref MediaConvertNotificationsTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref MediaConvertNotificationsTopic
+
+  # Lambda function for video conversion
+  ConvertToWebmFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: convert-to-webm
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          MEDIACONVERT_ENDPOINT: !Ref MediaConvertEndpoint
+          MEDIACONVERT_ROLE_ARN: !GetAtt MediaConvertRole.Arn
+      Code:
+        ZipFile: |
+          // Placeholder - deploy actual code via AWS CLI or CI/CD
+          exports.handler = async (event) => {
+            return { statusCode: 200, body: 'Deploy actual code' };
+          };
+
+Outputs:
+  MediaConvertRoleArn:
+    Description: ARN of the MediaConvert IAM role
+    Value: !GetAtt MediaConvertRole.Arn
+    Export:
+      Name: MediaConvertRoleArn
+
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt ConvertToWebmFunction.Arn
+    Export:
+      Name: ConvertToWebmLambdaArn
+
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Value: !Ref ConvertToWebmFunction
+    Export:
+      Name: ConvertToWebmLambdaName
+
+  SNSTopicArn:
+    Description: ARN of the SNS topic for MediaConvert notifications
+    Value: !Ref MediaConvertNotificationsTopic
+    Export:
+      Name: MediaConvertNotificationsTopicArn

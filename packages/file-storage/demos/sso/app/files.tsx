@@ -1,6 +1,7 @@
 import type { Controller } from '@remix-run/fetch-router'
 import { createRedirectResponse as redirect } from '@remix-run/response/redirect'
 import { createS3FileStorage } from '@remix-run/file-storage/s3'
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 
 import { routes } from './routes.ts'
 import { Layout, Document } from './layout.tsx'
@@ -55,6 +56,46 @@ function setCachedCredentials(
 let S3_BUCKET = 'nathanjmorton-s3-test-bucket'
 let S3_REGION = 'us-east-1'
 let S3_BASE_PREFIX = 'sso-demo'
+let CONVERT_LAMBDA_NAME = 'convert-to-webm'
+
+// Video extensions that can be converted to WebM
+let CONVERTIBLE_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.wmv', '.m4v']
+
+// SSE: Store for job status updates and connected clients
+interface JobStatusEvent {
+  jobId: string
+  status: string
+  percentComplete?: number
+  errorMessage?: string
+  timestamp: number
+}
+
+// Map of jobId -> latest status
+let jobStatusStore = new Map<string, JobStatusEvent>()
+
+// Map of jobId -> Set of SSE writers waiting for updates
+let sseClients = new Map<string, Set<WritableStreamDefaultWriter<Uint8Array>>>()
+
+function broadcastJobStatus(event: JobStatusEvent) {
+  jobStatusStore.set(event.jobId, event)
+  let clients = sseClients.get(event.jobId)
+  if (clients) {
+    let data = `data: ${JSON.stringify(event)}\n\n`
+    let encoded = new TextEncoder().encode(data)
+    for (let writer of clients) {
+      writer.write(encoded).catch(() => {
+        // Client disconnected, will be cleaned up
+      })
+    }
+  }
+  // Clean up old events after 10 minutes
+  setTimeout(() => jobStatusStore.delete(event.jobId), 10 * 60 * 1000)
+}
+
+function isConvertibleVideo(key: string): boolean {
+  let ext = key.substring(key.lastIndexOf('.')).toLowerCase()
+  return CONVERTIBLE_VIDEO_EXTENSIONS.includes(ext)
+}
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -247,7 +288,7 @@ export default {
                           <td>{file.key}</td>
                           <td>{file.size ? `${Math.round(file.size / 1024)} KB` : '-'}</td>
                           <td>{file.lastModified ? new Date(file.lastModified).toLocaleDateString() : '-'}</td>
-                          <td style="display: flex; gap: 0.5rem;">
+                          <td style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                             <a
                               href={routes.files.download.href() + `?key=${encodeURIComponent(file.key)}`}
                               class="btn btn-secondary"
@@ -255,6 +296,15 @@ export default {
                             >
                               Download
                             </a>
+                            {isConvertibleVideo(file.key) ? (
+                              <button
+                                class="btn convert-btn"
+                                style="padding: 0.25rem 0.5rem; font-size: 0.85rem; background: #6f42c1; color: white;"
+                                data-key={file.key}
+                              >
+                                Convert to WebM
+                              </button>
+                            ) : null}
                             <button
                               class="btn btn-danger delete-btn"
                               style="padding: 0.25rem 0.5rem; font-size: 0.85rem;"
@@ -469,6 +519,110 @@ export default {
                       }
                     };
                   }
+
+                  // Convert video to WebM
+                  async function convertFile(key, btn) {
+                    if (!confirm('Convert "' + key + '" to WebM? This may take a few minutes.')) return;
+                    btn.disabled = true;
+                    btn.textContent = 'Starting...';
+                    try {
+                      let res = await fetch('${routes.files.convert.href()}', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key: key })
+                      });
+                      let data = await res.json();
+                      if (!res.ok) {
+                        throw new Error(data.error || 'Conversion failed');
+                      }
+                      // Subscribe to SSE for real-time status updates
+                      subscribeToJobStatus(data.jobId, data.outputKey, btn);
+                    } catch (err) {
+                      showStatus('Error: ' + err.message, true);
+                      btn.disabled = false;
+                      btn.textContent = 'Convert to WebM';
+                      btn.style.background = '#6f42c1';
+                    }
+                  }
+
+                  // Subscribe to SSE for job status updates
+                  function subscribeToJobStatus(jobId, outputKey, btn) {
+                    btn.textContent = 'Connecting...';
+                    btn.style.background = '#17a2b8';
+
+                    let eventSource = new EventSource('${routes.files.convertEvents.href()}?jobId=' + encodeURIComponent(jobId));
+                    let timeout = setTimeout(function() {
+                      // Fallback timeout after 10 minutes
+                      eventSource.close();
+                      btn.textContent = 'Timeout';
+                      btn.style.background = '#ffc107';
+                      showStatus('Conversion is taking longer than expected. Check back later for: ' + outputKey, false);
+                    }, 10 * 60 * 1000);
+
+                    eventSource.onmessage = function(event) {
+                      let data = JSON.parse(event.data);
+                      let status = data.status;
+                      let percent = data.percentComplete || 0;
+
+                      if (status === 'COMPLETE') {
+                        clearTimeout(timeout);
+                        eventSource.close();
+                        btn.textContent = 'Done!';
+                        btn.style.background = '#28a745';
+                        showStatus('Conversion complete! Output: ' + outputKey, false);
+                        setTimeout(function() { window.location.reload(); }, 2000);
+                      } else if (status === 'ERROR' || status === 'CANCELED') {
+                        clearTimeout(timeout);
+                        eventSource.close();
+                        showStatus('Error: ' + (data.errorMessage || 'Job ' + status.toLowerCase()), true);
+                        btn.disabled = false;
+                        btn.textContent = 'Convert to WebM';
+                        btn.style.background = '#6f42c1';
+                      } else {
+                        // Still in progress (SUBMITTED, PROGRESSING)
+                        btn.textContent = status + ' ' + percent + '%';
+                        btn.style.background = '#17a2b8';
+                      }
+                    };
+
+                    eventSource.onerror = function() {
+                      // Connection error - fall back to one-time status check
+                      clearTimeout(timeout);
+                      eventSource.close();
+                      btn.textContent = 'Checking...';
+                      // Do a single status check via the API
+                      fetch('${routes.files.convertStatus.href()}?jobId=' + encodeURIComponent(jobId))
+                        .then(function(res) { return res.json(); })
+                        .then(function(data) {
+                          if (data.status === 'COMPLETE') {
+                            btn.textContent = 'Done!';
+                            btn.style.background = '#28a745';
+                            showStatus('Conversion complete! Output: ' + outputKey, false);
+                            setTimeout(function() { window.location.reload(); }, 2000);
+                          } else if (data.status === 'ERROR' || data.status === 'CANCELED') {
+                            showStatus('Error: ' + (data.errorMessage || 'Job failed'), true);
+                            btn.disabled = false;
+                            btn.textContent = 'Convert to WebM';
+                            btn.style.background = '#6f42c1';
+                          } else {
+                            btn.textContent = data.status + ' ' + (data.percentComplete || 0) + '%';
+                            showStatus('SSE connection lost. Refresh to check status.', false);
+                          }
+                        })
+                        .catch(function() {
+                          showStatus('Connection lost. Refresh to check conversion status.', false);
+                          btn.textContent = 'Check status';
+                          btn.style.background = '#ffc107';
+                        });
+                    };
+                  }
+
+                  // Attach convert handlers to buttons
+                  document.querySelectorAll('.convert-btn').forEach(function(btn) {
+                    btn.onclick = function() {
+                      convertFile(btn.getAttribute('data-key'), btn);
+                    };
+                  });
                 })();
               `} />
             </>
@@ -823,6 +977,210 @@ export default {
       } catch (error) {
         return json({ error: error instanceof Error ? error.message : 'Failed to abort multipart upload' }, 500)
       }
+    },
+
+    // Convert video to WebM via Lambda + MediaConvert
+    async convert({ session, request }) {
+      let user = session.get('user') as User | null
+      let idToken = session.get('id_token') as string | null
+
+      if (!user || !idToken) {
+        return json({ error: 'Unauthorized' }, 401)
+      }
+
+      try {
+        let body = await request.json()
+        let { key } = body as { key: string }
+
+        if (!key) {
+          return json({ error: 'Missing key parameter' }, 400)
+        }
+
+        // Validate it's a convertible video file
+        let ext = key.substring(key.lastIndexOf('.')).toLowerCase()
+        if (!CONVERTIBLE_VIDEO_EXTENSIONS.includes(ext)) {
+          return json({ error: `File type ${ext} cannot be converted to WebM` }, 400)
+        }
+
+        // Get the user's identity store ID for the full S3 key
+        let cached = getCachedCredentials(user.sub)
+        let identityStoreUserId: string
+        if (cached) {
+          identityStoreUserId = cached.identityStoreUserId
+        } else {
+          let config = getS3AccessGrantsConfig()
+          let result = await getS3CredentialsViaAccessGrants(config, idToken)
+          identityStoreUserId = result.identityStoreUserId
+          setCachedCredentials(user.sub, result)
+        }
+
+        // Construct full S3 key with prefix
+        let fullKey = `${S3_BASE_PREFIX}/${identityStoreUserId}/${key}`
+        // Output key: same path but with -converted.webm suffix
+        let outputKey = fullKey.replace(/\.[^.]+$/, '-converted.webm')
+
+        // Invoke Lambda to create MediaConvert job
+        let lambdaClient = new LambdaClient({ region: S3_REGION })
+        let command = new InvokeCommand({
+          FunctionName: CONVERT_LAMBDA_NAME,
+          Payload: JSON.stringify({
+            bucket: S3_BUCKET,
+            key: fullKey,
+            outputKey: outputKey,
+          }),
+        })
+
+        let response = await lambdaClient.send(command)
+        let payload = response.Payload ? JSON.parse(new TextDecoder().decode(response.Payload)) : null
+
+        if (response.FunctionError || (payload && payload.statusCode >= 400)) {
+          let errorBody = payload?.body ? JSON.parse(payload.body) : {}
+          return json({ error: errorBody.error || 'Lambda invocation failed' }, 500)
+        }
+
+        let result = payload?.body ? JSON.parse(payload.body) : payload
+        return json({
+          success: true,
+          jobId: result?.jobId,
+          status: result?.status,
+          outputKey: key.replace(/\.[^.]+$/, '-converted.webm'),
+          message: 'Conversion job started. The converted file will appear shortly.',
+        })
+      } catch (error) {
+        console.error('Convert error:', error)
+        return json({ error: error instanceof Error ? error.message : 'Failed to start conversion' }, 500)
+      }
+    },
+
+    // Get conversion job status
+    async convertStatus({ session, url }) {
+      let user = session.get('user') as User | null
+      let idToken = session.get('id_token') as string | null
+
+      if (!user || !idToken) {
+        return json({ error: 'Unauthorized' }, 401)
+      }
+
+      let jobId = url.searchParams.get('jobId')
+      if (!jobId) {
+        return json({ error: 'Missing jobId parameter' }, 400)
+      }
+
+      try {
+        let lambdaClient = new LambdaClient({ region: S3_REGION })
+        let command = new InvokeCommand({
+          FunctionName: CONVERT_LAMBDA_NAME,
+          Payload: JSON.stringify({
+            action: 'status',
+            jobId: jobId,
+          }),
+        })
+
+        let response = await lambdaClient.send(command)
+        let payload = response.Payload ? JSON.parse(new TextDecoder().decode(response.Payload)) : null
+
+        if (response.FunctionError || (payload && payload.statusCode >= 400)) {
+          let errorBody = payload?.body ? JSON.parse(payload.body) : {}
+          return json({ error: errorBody.error || 'Failed to get job status' }, 500)
+        }
+
+        let result = payload?.body ? JSON.parse(payload.body) : payload
+        return json(result)
+      } catch (error) {
+        console.error('ConvertStatus error:', error)
+        return json({ error: error instanceof Error ? error.message : 'Failed to get job status' }, 500)
+      }
+    },
+
+    // Webhook for SNS/EventBridge MediaConvert notifications
+    async convertWebhook({ request }) {
+      try {
+        // Handle SNS subscription confirmation
+        let messageType = request.headers.get('x-amz-sns-message-type')
+        if (messageType === 'SubscriptionConfirmation') {
+          let body = await request.json()
+          let subscribeUrl = body.SubscribeURL
+          if (subscribeUrl) {
+            // Confirm the subscription by visiting the URL
+            await fetch(subscribeUrl)
+            console.log('SNS subscription confirmed')
+          }
+          return new Response('OK', { status: 200 })
+        }
+
+        // Handle EventBridge event (via SNS with RawMessageDelivery)
+        let body = await request.json()
+        
+        // EventBridge MediaConvert event structure
+        let detail = body.detail
+        if (detail && detail.jobId) {
+          let event: JobStatusEvent = {
+            jobId: detail.jobId,
+            status: detail.status,
+            percentComplete: detail.jobProgress?.jobPercentComplete,
+            errorMessage: detail.errorMessage,
+            timestamp: Date.now(),
+          }
+          broadcastJobStatus(event)
+          console.log('MediaConvert status update:', event.jobId, event.status)
+        }
+
+        return new Response('OK', { status: 200 })
+      } catch (error) {
+        console.error('Webhook error:', error)
+        return new Response('Error', { status: 500 })
+      }
+    },
+
+    // SSE endpoint for real-time job status updates
+    async convertEvents({ session, url }) {
+      let user = session.get('user') as User | null
+      let idToken = session.get('id_token') as string | null
+
+      if (!user || !idToken) {
+        return new Response('Unauthorized', { status: 401 })
+      }
+
+      let jobId = url.searchParams.get('jobId')
+      if (!jobId) {
+        return new Response('Missing jobId', { status: 400 })
+      }
+
+      // Create a TransformStream for SSE
+      let { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
+      let writer = writable.getWriter()
+
+      // Register this client for updates
+      if (!sseClients.has(jobId)) {
+        sseClients.set(jobId, new Set())
+      }
+      sseClients.get(jobId)!.add(writer)
+
+      // Send initial status if we have it cached
+      let cachedStatus = jobStatusStore.get(jobId)
+      if (cachedStatus) {
+        let data = `data: ${JSON.stringify(cachedStatus)}\n\n`
+        writer.write(new TextEncoder().encode(data)).catch(() => {})
+      }
+
+      // Clean up when client disconnects
+      readable.pipeTo(new WritableStream()).catch(() => {}).finally(() => {
+        let clients = sseClients.get(jobId)
+        if (clients) {
+          clients.delete(writer)
+          if (clients.size === 0) {
+            sseClients.delete(jobId)
+          }
+        }
+      })
+
+      return new Response(readable, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      })
     },
   },
 } satisfies Controller<typeof routes.files>

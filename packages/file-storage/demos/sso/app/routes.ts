@@ -22,5 +22,10 @@ export let routes = route({
     multipartInitiate: post('/files/multipart/initiate'),
     multipartComplete: post('/files/multipart/complete'),
     multipartAbort: post('/files/multipart/abort'),
+    // Video conversion
+    convert: post('/files/convert'),
+    convertStatus: get('/files/convert/status'),
+    convertWebhook: post('/files/convert/webhook'),
+    convertEvents: get('/files/convert/events'),
   },
 })
