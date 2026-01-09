@@ -14,6 +14,7 @@ This demo shows how to use Auth0 as an external identity provider with AWS IAM I
 ```
 
 **Flow:**
+
 1. User authenticates with Auth0
 2. Auth0 JWT is exchanged for an Identity Center token via `CreateTokenWithIAM`
 3. Identity Bearer role is assumed with the identity context via `AssumeRole` with `ProvidedContexts`
@@ -57,16 +58,14 @@ export S3_PREFIX=sso-demo
 
 ```bash
 # Get the Identity Center instance ARN
-aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text
+export IDC_INSTANCE_ARN=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text)
 ```
-
-Save this as `$IDC_INSTANCE_ARN`.
 
 #### Step 2: Create a Trusted Token Issuer for Auth0
 
 ```bash
 # Create the trusted token issuer
-aws sso-admin create-trusted-token-issuer \
+export IDC_TRUSTED_TOKEN_ISSUER_ARN=$(aws sso-admin create-trusted-token-issuer \
   --instance-arn "$IDC_INSTANCE_ARN" \
   --name "Auth0" \
   --trusted-token-issuer-type "OIDC_JWT" \
@@ -77,7 +76,7 @@ aws sso-admin create-trusted-token-issuer \
       "IdentityStoreAttributePath": "externalIds.SCIM",
       "JwksRetrievalOption": "OPEN_ID_DISCOVERY"
     }
-  }'
+  }')
 ```
 
 Note the `TrustedTokenIssuerArn` in the response.
@@ -86,11 +85,11 @@ Note the `TrustedTokenIssuerArn` in the response.
 
 ```bash
 # Create application for trusted identity propagation
-aws sso-admin create-application \
+export IDC_APPLICATION_ARN=$(aws sso-admin create-application \
   --instance-arn "$IDC_INSTANCE_ARN" \
   --name "S3 Access Grants Demo" \
   --application-provider-arn "arn:aws:sso::aws:applicationProvider/custom" \
-  --portal-options '{"Visibility": "DISABLED"}'
+  --portal-options '{"Visibility": "DISABLED"}')
 ```
 
 Note the `ApplicationArn` in the response and save as `$IDC_APPLICATION_ARN`.
@@ -119,8 +118,11 @@ aws sso-admin put-application-authentication-method \
       }
     }
   }'
+```
 
 # Configure the grant (allows JWT bearer token exchange)
+
+```bash
 aws sso-admin put-application-grant \
   --application-arn "$IDC_APPLICATION_ARN" \
   --grant-type "urn:ietf:params:oauth:grant-type:jwt-bearer" \
@@ -132,8 +134,11 @@ aws sso-admin put-application-grant \
       }]
     }
   }'
+```
 
 # Configure access token settings
+
+```bash
 aws sso-admin put-application-access-scope \
   --application-arn "$IDC_APPLICATION_ARN" \
   --scope "s3:access_grants:read_write"
@@ -143,7 +148,7 @@ aws sso-admin put-application-access-scope \
 
 ```bash
 # Get the Identity Store ID
-IDENTITY_STORE_ID=$(aws sso-admin list-instances --query 'Instances[0].IdentityStoreId' --output text)
+export IDENTITY_STORE_ID=$(aws sso-admin list-instances --query 'Instances[0].IdentityStoreId' --output text)
 
 # Create a user (use the same email as your Auth0 user)
 aws identitystore create-user \
@@ -215,10 +220,10 @@ aws iam put-role-policy \
 
 ```bash
 # Register the S3 location with Access Grants
-aws s3control create-access-grants-location \
+export ACCESS_GRANTS_LOCATION_ID=$(aws s3control create-access-grants-location \
   --account-id "$AWS_ACCOUNT_ID" \
   --location-scope "s3://$S3_BUCKET/$S3_PREFIX/*" \
-  --iam-role-arn "arn:aws:iam::$AWS_ACCOUNT_ID:role/S3AccessGrantsLocationRole"
+  --iam-role-arn "arn:aws:iam::$AWS_ACCOUNT_ID:role/S3AccessGrantsLocationRole")
 ```
 
 Note the `AccessGrantsLocationId` in the response.
@@ -227,7 +232,7 @@ Note the `AccessGrantsLocationId` in the response.
 
 ```bash
 # Get the Identity Center user ID
-USER_ID=$(aws identitystore list-users \
+export USER_ID=$(aws identitystore list-users \
   --identity-store-id "$IDENTITY_STORE_ID" \
   --filters '[{"AttributePath": "UserName", "AttributeValue": "your-email@example.com"}]' \
   --query 'Users[0].UserId' --output text)
@@ -342,22 +347,26 @@ Open http://localhost:44100 in your browser.
 ## How It Works
 
 1. **User clicks "Login with Auth0"**
+
    - App redirects to Auth0's authorization endpoint
    - User authenticates (username/password, social login, etc.)
    - Auth0 returns an ID token (JWT)
 
 2. **JWT Exchange for Identity Center Token**
+
    - App calls `sso-oidc:CreateTokenWithIAM` with the Auth0 JWT
    - Identity Center validates the JWT against the trusted token issuer
    - Identity Center maps the `sub` claim to an Identity Center user via `externalIds`
    - Returns an Identity Center token with `sts:identity_context` claim
 
 3. **Assume Identity Bearer Role**
+
    - App calls `sts:AssumeRole` on the Identity Bearer role
    - Passes the identity context via `ProvidedContexts`
    - Returns credentials with the user's identity attached
 
 4. **Get S3 Credentials from Access Grants**
+
    - App calls `s3:GetDataAccess` with the Identity Bearer credentials
    - S3 Access Grants evaluates the user's grants
    - Returns scoped credentials for the granted S3 prefix
@@ -385,12 +394,14 @@ aws identitystore list-users --identity-store-id "$IDENTITY_STORE_ID"
 ### "Access Denied" on ListBucket
 
 S3 Access Grants doesn't include `s3:ListBucket` permission. Ensure the Identity Bearer role has:
+
 - `s3:ListBucket` with `s3:prefix` condition
 - `s3:GetObject` for HEAD requests during metadata fetch
 
 ### "InvalidGrantException" errors
 
 Check that:
+
 1. The trusted token issuer is configured correctly
 2. The application grant includes your Auth0 client ID as an authorized audience
 3. The Identity Center user exists and has the correct external ID

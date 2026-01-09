@@ -12,10 +12,15 @@ import {
 } from './utils/identity-center.ts'
 
 // Cache AWS credentials per user session to avoid re-redeeming the JWT
-// Key: user sub, Value: { credentials, listCredentials, matchedGrantTarget }
+// Key: user sub, Value: { credentials, listCredentials, identityStoreUserId, matchedGrantTarget }
 let awsCredentialsCache = new Map<
   string,
-  { credentials: AwsCredentials; listCredentials: AwsCredentials; matchedGrantTarget: string | undefined }
+  {
+    credentials: AwsCredentials
+    listCredentials: AwsCredentials
+    identityStoreUserId: string
+    matchedGrantTarget: string | undefined
+  }
 >()
 
 // Buffer time before expiration to refresh credentials (5 minutes)
@@ -37,16 +42,26 @@ function getCachedCredentials(userSub: string) {
 
 function setCachedCredentials(
   userSub: string,
-  result: { credentials: AwsCredentials; listCredentials: AwsCredentials; matchedGrantTarget: string | undefined },
+  result: {
+    credentials: AwsCredentials
+    listCredentials: AwsCredentials
+    identityStoreUserId: string
+    matchedGrantTarget: string | undefined
+  },
 ) {
   awsCredentialsCache.set(userSub, result)
 }
 
 let S3_BUCKET = 'nathanjmorton-s3-test-bucket'
 let S3_REGION = 'us-east-1'
-let S3_PREFIX = 'sso-demo'
+let S3_BASE_PREFIX = 'sso-demo'
 
-function createStorageWithCredentials(credentials: AwsCredentials) {
+/**
+ * Creates S3 storage with per-user folder prefix.
+ * Files are stored at: s3://bucket/sso-demo/{identityStoreUserId}/
+ */
+function createStorageWithCredentials(credentials: AwsCredentials, identityStoreUserId: string) {
+  let userPrefix = `${S3_BASE_PREFIX}/${identityStoreUserId}`
   return createS3FileStorage({
     bucket: S3_BUCKET,
     endpoint: `https://s3.${S3_REGION}.amazonaws.com`,
@@ -54,7 +69,7 @@ function createStorageWithCredentials(credentials: AwsCredentials) {
     accessKeyId: credentials.accessKeyId,
     secretAccessKey: credentials.secretAccessKey,
     sessionToken: credentials.sessionToken,
-    prefix: S3_PREFIX,
+    prefix: userPrefix,
   })
 }
 
@@ -92,6 +107,7 @@ export default {
       // Try to get AWS credentials via S3 Access Grants (with caching)
       let awsCredentials: AwsCredentials | null = null
       let listCredentials: AwsCredentials | null = null
+      let identityStoreUserId: string | null = null
       let awsError: string | null = null
       let matchedGrantTarget: string | undefined
 
@@ -100,6 +116,7 @@ export default {
       if (cached) {
         awsCredentials = cached.credentials
         listCredentials = cached.listCredentials
+        identityStoreUserId = cached.identityStoreUserId
         matchedGrantTarget = cached.matchedGrantTarget
       } else {
         try {
@@ -107,6 +124,7 @@ export default {
           let result = await getS3CredentialsViaAccessGrants(config, idToken)
           awsCredentials = result.credentials
           listCredentials = result.listCredentials
+          identityStoreUserId = result.identityStoreUserId
           matchedGrantTarget = result.matchedGrantTarget
           setCachedCredentials(user.sub, result)
         } catch (error) {
@@ -115,12 +133,13 @@ export default {
       }
 
       // List files using listCredentials (Identity Bearer role has s3:ListBucket)
+      // Files are scoped to the user's folder: sso-demo/{identityStoreUserId}/
       let files: { key: string; size?: number; lastModified?: number }[] = []
       let listError: string | null = null
 
-      if (listCredentials) {
+      if (listCredentials && identityStoreUserId) {
         try {
-          let storage = createStorageWithCredentials(listCredentials)
+          let storage = createStorageWithCredentials(listCredentials, identityStoreUserId)
           let result = await storage.list({ includeMetadata: true })
           files = result.files
         } catch (error) {
@@ -133,7 +152,10 @@ export default {
           <div class="card">
             <h2>S3 Files</h2>
             <p style="margin: 1rem 0; color: #666;">
-              Bucket: <code>{S3_BUCKET}</code> / Prefix: <code>{S3_PREFIX}/</code>
+              Bucket: <code>{S3_BUCKET}</code> / Prefix:{' '}
+              <code>
+                {S3_BASE_PREFIX}/{identityStoreUserId || '...'}/
+              </code>
             </p>
           </div>
 
@@ -271,15 +293,18 @@ export default {
         // Check cache first
         let cached = getCachedCredentials(user.sub)
         let credentials: AwsCredentials
+        let identityStoreUserId: string
         if (cached) {
           credentials = cached.credentials
+          identityStoreUserId = cached.identityStoreUserId
         } else {
           let config = getS3AccessGrantsConfig()
           let result = await getS3CredentialsViaAccessGrants(config, idToken)
           credentials = result.credentials
+          identityStoreUserId = result.identityStoreUserId
           setCachedCredentials(user.sub, result)
         }
-        let storage = createStorageWithCredentials(credentials)
+        let storage = createStorageWithCredentials(credentials, identityStoreUserId)
 
         let key = `${Date.now()}-${file.name}`
         await storage.put(key, file)
@@ -325,15 +350,18 @@ export default {
         // Check cache first
         let cached = getCachedCredentials(user.sub)
         let credentials: AwsCredentials
+        let identityStoreUserId: string
         if (cached) {
           credentials = cached.credentials
+          identityStoreUserId = cached.identityStoreUserId
         } else {
           let config = getS3AccessGrantsConfig()
           let result = await getS3CredentialsViaAccessGrants(config, idToken)
           credentials = result.credentials
+          identityStoreUserId = result.identityStoreUserId
           setCachedCredentials(user.sub, result)
         }
-        let storage = createStorageWithCredentials(credentials)
+        let storage = createStorageWithCredentials(credentials, identityStoreUserId)
 
         let signedUrl = await storage.getSignedUrl({ key, method: 'GET', expiresIn: 60 })
         return Response.redirect(signedUrl, 302)

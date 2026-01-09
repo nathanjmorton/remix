@@ -176,9 +176,11 @@ export async function getS3DataAccess(
  * 2. Assume Identity Bearer role with identity context
  * 3. Get S3 credentials from Access Grants
  *
- * Returns both:
+ * Returns:
  * - credentials: Access Grants credentials for object operations (get/put/delete)
  * - listCredentials: Identity Bearer credentials for listing (has s3:ListBucket)
+ * - identityStoreUserId: The user's Identity Store ID (for per-user folder paths)
+ * - matchedGrantTarget: The S3 prefix the grant matched
  */
 export async function getS3CredentialsViaAccessGrants(
   config: S3AccessGrantsConfig,
@@ -186,6 +188,7 @@ export async function getS3CredentialsViaAccessGrants(
 ): Promise<{
   credentials: AwsCredentials
   listCredentials: AwsCredentials
+  identityStoreUserId: string
   matchedGrantTarget: string | undefined
 }> {
   // Step 1: Exchange Auth0 token for Identity Center token
@@ -194,6 +197,20 @@ export async function getS3CredentialsViaAccessGrants(
   if (!tokenResponse.idToken) {
     throw new Error('CreateTokenWithIAM did not return an idToken')
   }
+
+  // Extract the Identity Store user ID from the Identity Center token
+  // The token may contain 'identitystore:UserId' claim, or the user ID is in the 'sub' claim directly
+  let idTokenPayload = decodeJwtPayload(tokenResponse.idToken)
+  let identityStoreUserId =
+    (idTokenPayload['identitystore:UserId'] as string) || (idTokenPayload.sub as string)
+
+  if (!identityStoreUserId) {
+    throw new Error(
+      'Identity Center token missing both identitystore:UserId and sub claims',
+    )
+  }
+
+  console.log('Identity Store User ID:', identityStoreUserId)
 
   // Step 2: Assume role with identity context
   let identityBearerCreds = await assumeRoleWithIdentityContext(config, tokenResponse.idToken)
@@ -237,6 +254,7 @@ export async function getS3CredentialsViaAccessGrants(
       expiration: new Date(response.Credentials.Expiration!),
     },
     listCredentials,
+    identityStoreUserId,
     matchedGrantTarget: response.MatchedGrantTarget,
   }
 }
