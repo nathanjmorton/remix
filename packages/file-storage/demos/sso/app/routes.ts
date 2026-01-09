@@ -16,5 +16,10 @@ export let routes = route({
     index: get('/files'),
     upload: post('/files/upload'),
     download: get('/files/download'),
+    // Presigned URL endpoints for client-side uploads
+    presign: get('/files/presign'),
+    multipartInitiate: post('/files/multipart/initiate'),
+    multipartComplete: post('/files/multipart/complete'),
+    multipartAbort: post('/files/multipart/abort'),
   },
 })

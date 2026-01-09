@@ -56,6 +56,13 @@ let S3_BUCKET = 'nathanjmorton-s3-test-bucket'
 let S3_REGION = 'us-east-1'
 let S3_BASE_PREFIX = 'sso-demo'
 
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
 /**
  * Creates S3 storage with per-user folder prefix.
  * Files are stored at: s3://bucket/sso-demo/{identityStoreUserId}/
@@ -189,20 +196,23 @@ export default {
             <>
               <div class="card">
                 <h3>Upload File</h3>
-                <form
-                  method="POST"
-                  action={routes.files.upload.href()}
-                  encType="multipart/form-data"
-                  style="margin-top: 1rem;"
-                >
-                  <div class="upload-box" id="dropzone">
-                    <p>Select a file to upload</p>
-                    <input type="file" name="file" id="file-input" style="margin-top: 1rem;" required />
+                <p style="font-size: 0.85rem; color: #666; margin-bottom: 1rem;">
+                  Files ≤5MB use simple PUT. Files &gt;5MB use multipart upload.
+                </p>
+                <div class="upload-box" id="dropzone">
+                  <p>Drag &amp; drop or select file</p>
+                  <input type="file" id="file-input" style="margin-top: 1rem;" />
+                </div>
+                <button id="upload-btn" class="btn" disabled>
+                  Upload to S3
+                </button>
+                <div id="upload-status" class="status" style="display: none; margin-top: 0.5rem;"></div>
+                <div id="progress-container" style="display: none; margin-top: 0.5rem;">
+                  <div style="background: #e0e0e0; border-radius: 4px; height: 8px;">
+                    <div id="progress-bar" style="background: #007bff; height: 100%; border-radius: 4px; width: 0%; transition: width 0.2s;"></div>
                   </div>
-                  <button type="submit" class="btn">
-                    Upload to S3
-                  </button>
-                </form>
+                  <p id="progress-text" style="font-size: 0.85rem; color: #666; margin-top: 0.25rem;"></p>
+                </div>
               </div>
 
               <div class="card">
@@ -219,7 +229,7 @@ export default {
                       <th>Actions</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody id="files-tbody">
                     {files.length > 0 ? (
                       files.map((file) => (
                         <tr>
@@ -247,6 +257,152 @@ export default {
                   </tbody>
                 </table>
               </div>
+
+              <script innerHTML={`
+                (function() {
+                  let selectedFile = null;
+                  let dropzone = document.getElementById('dropzone');
+                  let fileInput = document.getElementById('file-input');
+                  let uploadBtn = document.getElementById('upload-btn');
+                  let statusEl = document.getElementById('upload-status');
+                  let progressContainer = document.getElementById('progress-container');
+                  let progressBar = document.getElementById('progress-bar');
+                  let progressText = document.getElementById('progress-text');
+
+                  let MULTIPART_THRESHOLD = 5 * 1024 * 1024; // 5MB
+
+                  fileInput.onchange = function(e) {
+                    selectedFile = e.target.files[0];
+                    uploadBtn.disabled = !selectedFile;
+                  };
+
+                  dropzone.ondragover = function(e) {
+                    e.preventDefault();
+                    dropzone.classList.add('dragover');
+                  };
+                  dropzone.ondragleave = function() {
+                    dropzone.classList.remove('dragover');
+                  };
+                  dropzone.ondrop = function(e) {
+                    e.preventDefault();
+                    dropzone.classList.remove('dragover');
+                    selectedFile = e.dataTransfer.files[0];
+                    fileInput.files = e.dataTransfer.files;
+                    uploadBtn.disabled = !selectedFile;
+                  };
+
+                  function showStatus(msg, isError) {
+                    statusEl.textContent = msg;
+                    statusEl.style.display = 'block';
+                    statusEl.className = 'status ' + (isError ? 'alert alert-error' : 'alert alert-success');
+                  }
+
+                  function showProgress(percent, text) {
+                    progressContainer.style.display = 'block';
+                    progressBar.style.width = percent + '%';
+                    progressText.textContent = text;
+                  }
+
+                  function hideProgress() {
+                    progressContainer.style.display = 'none';
+                  }
+
+                  uploadBtn.onclick = async function() {
+                    if (!selectedFile) return;
+                    uploadBtn.disabled = true;
+                    statusEl.style.display = 'none';
+                    hideProgress();
+
+                    let key = Date.now() + '-' + selectedFile.name;
+
+                    try {
+                      if (selectedFile.size <= MULTIPART_THRESHOLD) {
+                        // Simple presigned PUT for small files
+                        showProgress(0, 'Getting presigned URL...');
+                        let res = await fetch('${routes.files.presign.href()}?key=' + encodeURIComponent(key));
+                        if (!res.ok) {
+                          let err = await res.json();
+                          throw new Error(err.error || 'Failed to get presigned URL');
+                        }
+                        let { url } = await res.json();
+
+                        showProgress(50, 'Uploading...');
+                        let uploadRes = await fetch(url, {
+                          method: 'PUT',
+                          body: selectedFile,
+                          headers: { 'Content-Type': selectedFile.type || 'application/octet-stream' }
+                        });
+                        if (!uploadRes.ok) throw new Error('Upload failed: ' + uploadRes.status);
+                        showProgress(100, 'Done!');
+                      } else {
+                        // Multipart upload for large files
+                        showProgress(0, 'Initiating multipart upload...');
+                        let initRes = await fetch('${routes.files.multipartInitiate.href()}', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            key: key,
+                            totalSize: selectedFile.size,
+                            contentType: selectedFile.type || 'application/octet-stream'
+                          })
+                        });
+                        if (!initRes.ok) {
+                          let err = await initRes.json();
+                          throw new Error(err.error || 'Failed to initiate multipart upload');
+                        }
+                        let { uploadId, parts } = await initRes.json();
+
+                        // Upload each part
+                        let completedParts = [];
+                        let partSize = Math.ceil(selectedFile.size / parts.length);
+
+                        for (let i = 0; i < parts.length; i++) {
+                          let start = i * partSize;
+                          let end = Math.min(start + partSize, selectedFile.size);
+                          let blob = selectedFile.slice(start, end);
+
+                          let percent = Math.round((i / parts.length) * 90);
+                          showProgress(percent, 'Uploading part ' + (i + 1) + '/' + parts.length + '...');
+
+                          let uploadRes = await fetch(parts[i].url, {
+                            method: 'PUT',
+                            body: blob
+                          });
+                          if (!uploadRes.ok) throw new Error('Part ' + (i + 1) + ' upload failed: ' + uploadRes.status);
+
+                          let etag = uploadRes.headers.get('ETag');
+                          if (!etag) throw new Error('No ETag in part ' + (i + 1) + ' response');
+                          completedParts.push({ partNumber: parts[i].partNumber, etag: etag });
+                        }
+
+                        // Complete multipart upload
+                        showProgress(95, 'Completing upload...');
+                        let completeRes = await fetch('${routes.files.multipartComplete.href()}', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ key: key, uploadId: uploadId, parts: completedParts })
+                        });
+                        if (!completeRes.ok) {
+                          let err = await completeRes.json();
+                          throw new Error(err.error || 'Failed to complete multipart upload');
+                        }
+                        showProgress(100, 'Done!');
+                      }
+
+                      showStatus('Uploaded: ' + key, false);
+                      selectedFile = null;
+                      fileInput.value = '';
+                      uploadBtn.disabled = true;
+                      // Refresh page to show new file
+                      setTimeout(function() { window.location.reload(); }, 1000);
+                    } catch (err) {
+                      showStatus('Error: ' + err.message, true);
+                      hideProgress();
+                      uploadBtn.disabled = false;
+                    }
+                  };
+                })();
+              `} />
             </>
           ) : null}
 
@@ -384,6 +540,173 @@ export default {
           </Document>,
           { status: 500 },
         )
+      }
+    },
+
+    // Get presigned URL for simple PUT upload (small files)
+    async presign({ session, url }) {
+      let user = session.get('user') as User | null
+      let idToken = session.get('id_token') as string | null
+
+      if (!user || !idToken) {
+        return json({ error: 'Unauthorized' }, 401)
+      }
+
+      let key = url.searchParams.get('key')
+      if (!key) {
+        return json({ error: 'Missing key parameter' }, 400)
+      }
+
+      try {
+        let cached = getCachedCredentials(user.sub)
+        let credentials: AwsCredentials
+        let identityStoreUserId: string
+        if (cached) {
+          credentials = cached.credentials
+          identityStoreUserId = cached.identityStoreUserId
+        } else {
+          let config = getS3AccessGrantsConfig()
+          let result = await getS3CredentialsViaAccessGrants(config, idToken)
+          credentials = result.credentials
+          identityStoreUserId = result.identityStoreUserId
+          setCachedCredentials(user.sub, result)
+        }
+        let storage = createStorageWithCredentials(credentials, identityStoreUserId)
+
+        let presignedUrl = await storage.getSignedUrl({ key, method: 'PUT', expiresIn: 300 })
+        return json({ url: presignedUrl, key })
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : 'Failed to get presigned URL' }, 500)
+      }
+    },
+
+    // Initiate multipart upload (large files)
+    async multipartInitiate({ session, request }) {
+      let user = session.get('user') as User | null
+      let idToken = session.get('id_token') as string | null
+
+      if (!user || !idToken) {
+        return json({ error: 'Unauthorized' }, 401)
+      }
+
+      try {
+        let body = await request.json()
+        let { key, totalSize, contentType } = body as {
+          key: string
+          totalSize: number
+          contentType?: string
+        }
+
+        if (!key || !totalSize) {
+          return json({ error: 'Missing key or totalSize' }, 400)
+        }
+
+        let cached = getCachedCredentials(user.sub)
+        let credentials: AwsCredentials
+        let identityStoreUserId: string
+        if (cached) {
+          credentials = cached.credentials
+          identityStoreUserId = cached.identityStoreUserId
+        } else {
+          let config = getS3AccessGrantsConfig()
+          let result = await getS3CredentialsViaAccessGrants(config, idToken)
+          credentials = result.credentials
+          identityStoreUserId = result.identityStoreUserId
+          setCachedCredentials(user.sub, result)
+        }
+        let storage = createStorageWithCredentials(credentials, identityStoreUserId)
+
+        let result = await storage.initiateMultipartUpload({
+          key,
+          totalSize,
+          contentType: contentType || 'application/octet-stream',
+          expiresIn: 3600,
+        })
+        return json(result)
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : 'Failed to initiate multipart upload' }, 500)
+      }
+    },
+
+    // Complete multipart upload
+    async multipartComplete({ session, request }) {
+      let user = session.get('user') as User | null
+      let idToken = session.get('id_token') as string | null
+
+      if (!user || !idToken) {
+        return json({ error: 'Unauthorized' }, 401)
+      }
+
+      try {
+        let body = await request.json()
+        let { key, uploadId, parts } = body as {
+          key: string
+          uploadId: string
+          parts: Array<{ partNumber: number; etag: string }>
+        }
+
+        if (!key || !uploadId || !parts) {
+          return json({ error: 'Missing key, uploadId, or parts' }, 400)
+        }
+
+        let cached = getCachedCredentials(user.sub)
+        let credentials: AwsCredentials
+        let identityStoreUserId: string
+        if (cached) {
+          credentials = cached.credentials
+          identityStoreUserId = cached.identityStoreUserId
+        } else {
+          let config = getS3AccessGrantsConfig()
+          let result = await getS3CredentialsViaAccessGrants(config, idToken)
+          credentials = result.credentials
+          identityStoreUserId = result.identityStoreUserId
+          setCachedCredentials(user.sub, result)
+        }
+        let storage = createStorageWithCredentials(credentials, identityStoreUserId)
+
+        await storage.completeMultipartUpload({ key, uploadId, parts })
+        return json({ success: true })
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : 'Failed to complete multipart upload' }, 500)
+      }
+    },
+
+    // Abort multipart upload
+    async multipartAbort({ session, request }) {
+      let user = session.get('user') as User | null
+      let idToken = session.get('id_token') as string | null
+
+      if (!user || !idToken) {
+        return json({ error: 'Unauthorized' }, 401)
+      }
+
+      try {
+        let body = await request.json()
+        let { key, uploadId } = body as { key: string; uploadId: string }
+
+        if (!key || !uploadId) {
+          return json({ error: 'Missing key or uploadId' }, 400)
+        }
+
+        let cached = getCachedCredentials(user.sub)
+        let credentials: AwsCredentials
+        let identityStoreUserId: string
+        if (cached) {
+          credentials = cached.credentials
+          identityStoreUserId = cached.identityStoreUserId
+        } else {
+          let config = getS3AccessGrantsConfig()
+          let result = await getS3CredentialsViaAccessGrants(config, idToken)
+          credentials = result.credentials
+          identityStoreUserId = result.identityStoreUserId
+          setCachedCredentials(user.sub, result)
+        }
+        let storage = createStorageWithCredentials(credentials, identityStoreUserId)
+
+        await storage.abortMultipartUpload({ key, uploadId })
+        return json({ success: true })
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : 'Failed to abort multipart upload' }, 500)
       }
     },
   },
