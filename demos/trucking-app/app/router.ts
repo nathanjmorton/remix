@@ -13,16 +13,14 @@ import { staticFiles } from 'remix/static-middleware'
 
 import loadsController from './controllers/loads/controller.tsx'
 import weeksController from './controllers/weeks/controller.tsx'
+import { analytics } from './controllers/analytics/controller.tsx'
 import { home } from './controllers/home.tsx'
 import { loadDatabase } from './middleware/database.ts'
 import { loadAssetEntry, noopAssetEntry } from './middleware/asset-entry.ts'
 import { routes } from './routes.ts'
 import { assetServer } from './utils/assets.ts'
 
-export type RootMiddleware = [
-  ReturnType<typeof formData>,
-  ReturnType<typeof loadDatabase>,
-]
+export type RootMiddleware = [ReturnType<typeof formData>, ReturnType<typeof loadDatabase>]
 
 export type AppContext<params extends AnyParams = AnyParams> = WithParams<
   MiddlewareContext<RootMiddleware>,
@@ -64,6 +62,7 @@ export function createTruckingRouter(options: TruckingRouterOptions = {}) {
   router.map(routes.home, home)
   router.map(routes.weeks, weeksController)
   router.map(routes.loads, loadsController)
+  router.map(routes.analytics, analytics)
 
   return router
 }

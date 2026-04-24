@@ -18,6 +18,7 @@ export function Layout() {
           </h1>
           <nav>
             <a href={routes.weeks.index.href()}>Loads</a>
+            <a href={routes.analytics.href()}>Analytics</a>
           </nav>
         </div>
       </header>

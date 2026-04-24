@@ -30,7 +30,10 @@
   }
 
   body {
-    font-family: system-ui, -apple-system, sans-serif;
+    font-family:
+      system-ui,
+      -apple-system,
+      sans-serif;
     line-height: 1.6;
     color: #333;
     background: #f5f5f5;
@@ -242,5 +245,181 @@
   .week-tab-new:hover {
     background: #eaf4fb;
     color: #1f6fa3;
+  }
+
+  .analytics__header {
+    margin-bottom: 1.25rem;
+  }
+  .analytics__subtitle {
+    color: #666;
+    font-size: 0.9rem;
+    margin-top: 0.25rem;
+  }
+  .analytics-form {
+    background: white;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .analytics-layout {
+    display: grid;
+    grid-template-columns: minmax(220px, 280px) 1fr;
+    gap: 1.25rem;
+    align-items: start;
+  }
+  @media (max-width: 768px) {
+    .analytics-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+  .column-library {
+    border-right: 1px solid #eee;
+    padding-right: 1.25rem;
+  }
+  @media (max-width: 768px) {
+    .column-library {
+      border-right: none;
+      border-bottom: 1px solid #eee;
+      padding-right: 0;
+      padding-bottom: 1rem;
+    }
+  }
+  .column-library__heading {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #888;
+    margin: 0.75rem 0 0.5rem;
+  }
+  .column-library__heading:first-child {
+    margin-top: 0;
+  }
+  .column-library__group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+  .column-library__hint {
+    font-size: 0.75rem;
+    color: #999;
+    margin-top: 1rem;
+  }
+  .column-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.3rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: grab;
+    user-select: none;
+    border: 1px solid transparent;
+    transition:
+      background 0.15s,
+      border-color 0.15s,
+      opacity 0.15s;
+  }
+  .column-chip:active {
+    cursor: grabbing;
+  }
+  .column-chip--dimension {
+    background: #e8f1fb;
+    color: #1f4e79;
+    border-color: #c7dcef;
+  }
+  .column-chip--dimension:hover {
+    background: #d9e8f7;
+  }
+  .column-chip--measure {
+    background: #eaf7ee;
+    color: #1f6b38;
+    border-color: #c9e6d1;
+  }
+  .column-chip--measure:hover {
+    background: #d9efe0;
+  }
+  .column-chip--selected {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .column-chip__badge {
+    font-size: 0.7rem;
+    color: #2e7d48;
+  }
+  .column-chip__remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.1rem;
+    height: 1.1rem;
+    border-radius: 999px;
+    color: inherit;
+    text-decoration: none;
+    font-size: 0.95rem;
+    line-height: 1;
+    opacity: 0.6;
+  }
+  .column-chip__remove:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.1);
+  }
+  .template {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .drop-zone {
+    border: 2px dashed #cfd8dd;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    background: #fafbfc;
+    transition:
+      background 0.15s,
+      border-color 0.15s;
+  }
+  .drop-zone--drag-over {
+    border-color: #2980b9;
+    background: #eef6fc;
+  }
+  .drop-zone__heading {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #666;
+    margin-bottom: 0.5rem;
+  }
+  .drop-zone__items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    min-height: 2rem;
+    align-items: center;
+  }
+  .drop-zone__empty {
+    color: #aaa;
+    font-size: 0.85rem;
+    font-style: italic;
+  }
+  .template__actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.25rem;
+  }
+  .analytics-grid__col--measure {
+    text-align: right;
+  }
+  .analytics__empty {
+    background: white;
+    border-radius: 8px;
+    padding: 2rem;
+    text-align: center;
+    color: #888;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   }
 }

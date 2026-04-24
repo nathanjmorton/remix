@@ -7,4 +7,5 @@ export const routes = route({
   home: '/',
   weeks: resources('weeks', { param: 'weekId' }),
   loads: resources('loads', { param: 'loadId' }),
+  analytics: '/analytics',
 })
