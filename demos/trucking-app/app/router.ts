@@ -12,9 +12,10 @@ import { methodOverride } from 'remix/method-override-middleware'
 import { staticFiles } from 'remix/static-middleware'
 
 import loadsController from './controllers/loads/controller.tsx'
+import weeksController from './controllers/weeks/controller.tsx'
 import { home } from './controllers/home.tsx'
 import { loadDatabase } from './middleware/database.ts'
-import { loadAssetEntry } from './middleware/asset-entry.ts'
+import { loadAssetEntry, noopAssetEntry } from './middleware/asset-entry.ts'
 import { routes } from './routes.ts'
 import { assetServer } from './utils/assets.ts'
 
@@ -28,7 +29,11 @@ export type AppContext<params extends AnyParams = AnyParams> = WithParams<
   params
 >
 
-export function createTruckingRouter() {
+export interface TruckingRouterOptions {
+  skipAssets?: boolean
+}
+
+export function createTruckingRouter(options: TruckingRouterOptions = {}) {
   let middleware = []
 
   if (process.env.NODE_ENV === 'development') {
@@ -47,7 +52,7 @@ export function createTruckingRouter() {
   middleware.push(methodOverride())
   middleware.push(asyncContext())
   middleware.push(loadDatabase())
-  middleware.push(loadAssetEntry())
+  middleware.push(options.skipAssets ? noopAssetEntry() : loadAssetEntry())
 
   let router = createRouter({ middleware })
 
@@ -57,6 +62,7 @@ export function createTruckingRouter() {
   })
 
   router.map(routes.home, home)
+  router.map(routes.weeks, weeksController)
   router.map(routes.loads, loadsController)
 
   return router

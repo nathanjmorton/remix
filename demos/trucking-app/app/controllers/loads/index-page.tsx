@@ -18,7 +18,13 @@ function fmtUsd(val: number | null): string {
 }
 
 export function LoadsIndexPage() {
-  return ({ loads }: LoadsIndexPageProps) => (
+  return ({ loads }: LoadsIndexPageProps) => {
+    let totalMiles = loads.reduce((sum, l) => sum + (l.miles ?? 0), 0)
+    let totalGross = loads.reduce((sum, l) => sum + (l.gross_usd ?? 0), 0)
+    let totalNet = loads.reduce((sum, l) => sum + (l.net_usd ?? 0), 0)
+    let totalRevNetFuel = loads.reduce((sum, l) => sum + (l.rev_net_of_fuel_est ?? 0), 0)
+
+    return (
     <Layout title="Loads">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
         <h2>Loads</h2>
@@ -78,8 +84,26 @@ export function LoadsIndexPage() {
               </tr>
             )}
           </tbody>
+          {loads.length > 0 && (
+            <tfoot>
+              <tr>
+                <td
+                  colspan={4}
+                  style="text-align:right; font-weight:600; padding-right:0.75rem;"
+                >
+                  Totals
+                </td>
+                <td style="font-weight:600;">{fmt(totalMiles, 0)}</td>
+                <td style="font-weight:600;">{fmtUsd(totalGross)}</td>
+                <td style="font-weight:600;">{fmtUsd(totalNet)}</td>
+                <td style="font-weight:600;">{fmtUsd(totalRevNetFuel)}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </Layout>
-  )
+    )
+  }
 }

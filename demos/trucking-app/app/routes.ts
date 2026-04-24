@@ -5,5 +5,6 @@ export const assetsBase = '/assets'
 export const routes = route({
   assets: `${assetsBase}/*path`,
   home: '/',
+  weeks: resources('weeks', { param: 'weekId' }),
   loads: resources('loads', { param: 'loadId' }),
 })

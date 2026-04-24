@@ -1,6 +1,16 @@
 import { column as c, table } from 'remix/data-table'
 import type { TableRow } from 'remix/data-table'
 
+export const weeks = table({
+  name: 'weeks',
+  columns: {
+    id: c.integer(),
+    start_date: c.text(),
+  },
+})
+
+export type Week = TableRow<typeof weeks>
+
 export const loads = table({
   name: 'loads',
   columns: {
@@ -25,6 +35,7 @@ export const loads = table({
     fuel_notes: c.text().nullable(),
     rev_net_of_fuel_act: c.decimal(10, 4).nullable(),
     rev_notes: c.text().nullable(),
+    week_id: c.integer().nullable(),
   },
 })
 

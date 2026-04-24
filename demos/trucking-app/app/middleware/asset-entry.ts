@@ -13,6 +13,13 @@ interface AssetEntry {
 const assetsEntryKey = createContextKey<AssetEntry>()
 const defaultEntry = path.resolve(import.meta.dirname, '../assets/entry.tsx')
 
+export function noopAssetEntry(): Middleware {
+  return async (context, next) => {
+    context.set(assetsEntryKey, { src: '', preloads: [] })
+    return next()
+  }
+}
+
 export function loadAssetEntry(entry = defaultEntry): Middleware {
   return async (context, next) => {
     let [src, preloads] = await Promise.all([

@@ -2,6 +2,7 @@ import type { Controller } from 'remix/fetch-router'
 import * as s from 'remix/data-schema'
 import * as f from 'remix/data-schema/form-data'
 import { Database } from 'remix/data-table'
+import { getContext } from 'remix/async-context-middleware'
 import { redirect } from 'remix/response/redirect'
 
 import { loads } from '../../data/schema.ts'
@@ -9,7 +10,6 @@ import { routes } from '../../routes.ts'
 import { parseId } from '../../utils/ids.ts'
 import { render } from '../../utils/render.tsx'
 import { LoadFormPage } from './form.tsx'
-import { LoadsIndexPage } from './index-page.tsx'
 import { LoadNotFoundPage, LoadShowPage } from './show-page.tsx'
 
 const textField = f.field(s.defaulted(s.string(), ''))
@@ -34,13 +34,81 @@ const loadSchema = f.object({
   rev_notes: optionalTextField,
 })
 
+const createLoadSchema = f.object({
+  date: textField,
+  pu_city: optionalTextField,
+  pu_datetime: optionalTextField,
+  do_city: optionalTextField,
+  do_datetime: optionalTextField,
+  miles: numericField,
+  gross_usd: numericField,
+  mpg_est: numericField,
+  fuel_price_est: numericField,
+  week_id: optionalTextField,
+})
+
+function deriveWeekday(dateStr: string | null | undefined): string | null {
+  if (!dateStr) return null
+  // expects YYYY-MM-DD
+  let parts = dateStr.split('-')
+  if (parts.length !== 3) return null
+  let year = parseInt(parts[0]!, 10)
+  let month = parseInt(parts[1]!, 10)
+  let day = parseInt(parts[2]!, 10)
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return null
+  let date = new Date(year, month - 1, day)
+  if (isNaN(date.getTime())) return null
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()] ?? null
+}
+
 function parseNum(v: string | undefined | null): number | null {
   if (!v || v.trim() === '') return null
   let n = parseFloat(v)
   return isNaN(n) ? null : n
 }
 
-function buildLoadValues(fields: ReturnType<typeof s.parse<typeof loadSchema>>) {
+function buildCreateValues(fields: s.InferOutput<typeof createLoadSchema>) {
+  let miles = parseNum(fields.miles)
+  let gross_usd = parseNum(fields.gross_usd)
+  let net_pct = 0.75
+  let mpg_est = parseNum(fields.mpg_est) ?? 7.5
+  let fuel_price_est = parseNum(fields.fuel_price_est) ?? 5.75
+  let rawWeekId = fields.week_id
+  let week_id =
+    rawWeekId && rawWeekId.trim() !== '' ? parseInt(rawWeekId, 10) : null
+
+  let net_usd = gross_usd != null ? gross_usd * net_pct : null
+  let fuel_gal_est = miles != null && mpg_est > 0 ? miles / mpg_est : null
+  let fuel_usd_est = fuel_gal_est != null ? fuel_gal_est * fuel_price_est : null
+  let rev_net_of_fuel_est =
+    net_usd != null && fuel_usd_est != null ? net_usd - fuel_usd_est : null
+
+  return {
+    date: fields.date || null,
+    weekday: deriveWeekday(fields.date),
+    pu_city: fields.pu_city || null,
+    pu_datetime: fields.pu_datetime || null,
+    do_city: fields.do_city || null,
+    do_datetime: fields.do_datetime || null,
+    miles,
+    gross_usd,
+    net_pct,
+    net_usd,
+    mpg_est,
+    fuel_gal_est,
+    fuel_price_est,
+    fuel_usd_est,
+    rev_net_of_fuel_est,
+    notes_load: null,
+    fuel_usd_act: null,
+    fuel_notes: null,
+    rev_net_of_fuel_act: null,
+    rev_notes: null,
+    week_id,
+  }
+}
+
+function buildLoadValues(fields: s.InferOutput<typeof loadSchema>) {
   let miles = parseNum(fields.miles)
   let gross_usd = parseNum(fields.gross_usd)
   let net_pct = parseNum(fields.net_pct) ?? 0.75
@@ -82,10 +150,8 @@ function buildLoadValues(fields: ReturnType<typeof s.parse<typeof loadSchema>>) 
 
 export default {
   actions: {
-    async index({ get }) {
-      let db = get(Database)
-      let allLoads = await db.findMany(loads, { orderBy: ['id', 'asc'] })
-      return render(<LoadsIndexPage loads={allLoads} />)
+    async index() {
+      return redirect(routes.weeks.index.href())
     },
 
     async show({ get, params }) {
@@ -101,12 +167,22 @@ export default {
     },
 
     new() {
+      let context = getContext()
+      let url = new URL(context.request.url)
+      let weekIdStr = url.searchParams.get('weekId')
+      let weekId = weekIdStr ? parseInt(weekIdStr, 10) : null
       return render(
         <LoadFormPage
           title="New Load"
           action={routes.loads.create.href()}
-          cancelHref={routes.loads.index.href()}
+          cancelHref={
+            weekId != null
+              ? routes.weeks.show.href({ weekId })
+              : routes.weeks.index.href()
+          }
           submitLabel="Create Load"
+          simplified={true}
+          weekId={weekId}
         />,
       )
     },
@@ -114,9 +190,14 @@ export default {
     async create({ get }) {
       let db = get(Database)
       let formData = get(FormData)
-      let fields = s.parse(loadSchema, formData)
-      await db.create(loads, buildLoadValues(fields))
-      return redirect(routes.loads.index.href())
+      let fields = s.parse(createLoadSchema, formData)
+      let values = buildCreateValues(fields)
+      await db.create(loads, values)
+      let weekId = values.week_id
+      if (weekId != null) {
+        return redirect(routes.weeks.show.href({ weekId }))
+      }
+      return redirect(routes.weeks.index.href())
     },
 
     async edit({ get, params }) {
@@ -159,12 +240,16 @@ export default {
       let db = get(Database)
       let loadId = parseId(params.loadId)
       let load = loadId === undefined ? undefined : await db.find(loads, loadId)
+      let weekId = load?.week_id
 
       if (load) {
         await db.delete(loads, load.id)
       }
 
-      return redirect(routes.loads.index.href())
+      if (weekId != null) {
+        return redirect(routes.weeks.show.href({ weekId }))
+      }
+      return redirect(routes.weeks.index.href())
     },
   },
 } satisfies Controller<typeof routes.loads>

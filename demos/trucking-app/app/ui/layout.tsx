@@ -17,8 +17,7 @@ export function Layout() {
             <a href={routes.home.href()}>🚛 Trucking App</a>
           </h1>
           <nav>
-            <a href={routes.loads.index.href()}>Loads</a>
-            <a href={routes.loads.new.href()}>+ New Load</a>
+            <a href={routes.weeks.index.href()}>Loads</a>
           </nav>
         </div>
       </header>

@@ -2,6 +2,7 @@ import type { Load } from '../../data/schema.ts'
 import { routes } from '../../routes.ts'
 import { Layout } from '../../ui/layout.tsx'
 import { RestfulForm } from '../../ui/restful-form.tsx'
+import { formatDate } from '../weeks/week-page.tsx'
 
 export interface LoadShowPageProps {
   load: Load
@@ -36,7 +37,14 @@ export function LoadShowPage() {
               Delete
             </button>
           </RestfulForm>
-          <a href={routes.loads.index.href()} class="btn btn-secondary">
+          <a
+            href={
+              load.week_id != null
+                ? routes.weeks.show.href({ weekId: load.week_id })
+                : routes.weeks.index.href()
+            }
+            class="btn btn-secondary"
+          >
             ← Back
           </a>
         </div>
@@ -46,7 +54,7 @@ export function LoadShowPage() {
         <p class="section-title">Trip Info</p>
         <dl class="dl-grid">
           <dt>Date</dt>
-          <dd>{val(load.date)}</dd>
+          <dd>{formatDate(load.date)}</dd>
           <dt>Weekday</dt>
           <dd>{val(load.weekday)}</dd>
           <dt>Pickup City</dt>
@@ -125,7 +133,7 @@ export function LoadNotFoundPage() {
       <div class="card">
         <h2>Load not found</h2>
         <p>
-          <a href={routes.loads.index.href()} class="btn btn-secondary" style="margin-top:1rem;">
+          <a href={routes.weeks.index.href()} class="btn btn-secondary" style="margin-top:1rem;">
             ← Back to Loads
           </a>
         </p>
