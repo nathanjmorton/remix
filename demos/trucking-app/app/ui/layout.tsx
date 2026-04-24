@@ -1,5 +1,6 @@
 import type { RemixNode } from 'remix/component'
 
+import { LoadsLink } from '../assets/loads-link.tsx'
 import { routes } from '../routes.ts'
 import { Document } from './document.tsx'
 
@@ -17,7 +18,7 @@ export function Layout() {
             <a href={routes.home.href()}>🚛 Trucking App</a>
           </h1>
           <nav>
-            <a href={routes.weeks.index.href()}>Loads</a>
+            <LoadsLink setup={{ defaultHref: routes.weeks.index.href(), label: 'Loads' }} />
             <a href={routes.analytics.href()}>Analytics</a>
           </nav>
         </div>

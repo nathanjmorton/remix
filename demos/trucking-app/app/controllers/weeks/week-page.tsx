@@ -53,11 +53,13 @@ export function WeekPage() {
       <Layout title={weekLabel(currentWeek.start_date)}>
         <div class="week-nav">
           <WeekSelect
-            options={weeks.map((week) => ({
-              value: routes.weeks.show.href({ weekId: toWeekId(week.start_date) }),
-              label: weekLabel(week.start_date),
-              selected: week.id === currentWeek.id,
-            }))}
+            setup={{
+              options: weeks.map((week) => ({
+                value: routes.weeks.show.href({ weekId: toWeekId(week.start_date) }),
+                label: weekLabel(week.start_date),
+                selected: week.id === currentWeek.id,
+              })),
+            }}
           />
           <a href={routes.weeks.new.href()} class="btn btn-secondary btn-sm">
             + New Week
