@@ -44,11 +44,11 @@ test('buildAnalyticsQuery: produces detail SQL with GROUP BY + ORDER BY', () => 
   assert.ok(result)
   let detail = result.detailSql.text
   assert.match(detail, /SELECT /)
-  assert.match(detail, /loads\.week_id AS dim_0/)
+  assert.match(detail, /REPLACE\(weeks\.start_date, '-', ''\) AS dim_0/)
   assert.match(detail, /SUM\(loads\.gross_usd\) AS m_0/)
   assert.match(detail, /FROM loads LEFT JOIN weeks ON weeks\.id = loads\.week_id/)
-  assert.match(detail, /GROUP BY loads\.week_id/)
-  assert.match(detail, /ORDER BY loads\.week_id ASC/)
+  assert.match(detail, /GROUP BY REPLACE\(weeks\.start_date, '-', ''\)/)
+  assert.match(detail, /ORDER BY REPLACE\(weeks\.start_date, '-', ''\) ASC/)
 })
 
 test('buildAnalyticsQuery: totals SQL omits GROUP BY and dimensions', () => {

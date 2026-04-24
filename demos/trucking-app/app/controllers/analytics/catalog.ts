@@ -28,8 +28,10 @@ export const DIMENSIONS: readonly Dimension[] = [
   {
     id: 'week_id',
     label: 'Week ID',
-    selectSql: 'loads.week_id',
-    groupBySql: 'loads.week_id',
+    // Surface the URL-style YYYYMMDD week id rather than the internal integer
+    // FK so values match the rest of the app (e.g. 20260420 instead of 1).
+    selectSql: "REPLACE(weeks.start_date, '-', '')",
+    groupBySql: "REPLACE(weeks.start_date, '-', '')",
     format: 'integer',
   },
   {
