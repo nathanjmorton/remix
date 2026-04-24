@@ -62,17 +62,17 @@ test('GET /weeks now redirects to the newly created week', async () => {
   )
 })
 
-test('GET /weeks/:id renders the week view with tab strip and load table', async () => {
+test('GET /weeks/:id renders the week view with week dropdown and load table', async () => {
   let redirect = await router.fetch(get('/weeks'))
   let weekHref = redirect.headers.get('location')!
 
   let res = await router.fetch(get(weekHref))
   assert.equal(res.status, 200)
   let html = await res.text()
-  assert.ok(html.includes('week-tabs'), 'Should render tab strip')
+  assert.ok(html.includes('week-select'), 'Should render week dropdown')
   assert.ok(html.includes('Apr 27'), 'Should show the week label')
   assert.ok(html.includes('New Load'), 'Should show New Load button')
-  assert.ok(html.includes('New Week'), 'Should show New Week tab link')
+  assert.ok(html.includes('New Week'), 'Should show New Week link')
 })
 
 // ─── /loads/new ──────────────────────────────────────────────────────────────
@@ -104,13 +104,13 @@ test('POST /loads creates a load and redirects to the owning week', async () => 
     }),
   )
   assert.equal(res.status, 302)
-  assert.equal(res.headers.get('location'), '/weeks/1')
+  assert.equal(res.headers.get('location'), '/weeks/20260427')
 })
 
-// ─── GET /weeks/1 after load creation ────────────────────────────────────────
+// ─── GET /weeks/20260427 after load creation ──────────────────────────────────
 
-test('GET /weeks/1 shows the created load in the table', async () => {
-  let res = await router.fetch(get('/weeks/1'))
+test('GET /weeks/20260427 shows the created load in the table', async () => {
+  let res = await router.fetch(get('/weeks/20260427'))
   assert.equal(res.status, 200)
   let html = await res.text()
   assert.ok(html.includes('Alma'), 'Should show pickup city')
@@ -134,11 +134,11 @@ test('GET /loads/1 shows the load detail with derived weekday and revenue', asyn
 test('DELETE /loads/1 removes the load and redirects to the owning week', async () => {
   let res = await router.fetch(del('/loads/1'))
   assert.equal(res.status, 302)
-  assert.equal(res.headers.get('location'), '/weeks/1')
+  assert.equal(res.headers.get('location'), '/weeks/20260427')
 })
 
-test('GET /weeks/1 shows empty table after the load is deleted', async () => {
-  let res = await router.fetch(get('/weeks/1'))
+test('GET /weeks/20260427 shows empty table after the load is deleted', async () => {
+  let res = await router.fetch(get('/weeks/20260427'))
   assert.equal(res.status, 200)
   let html = await res.text()
   assert.ok(html.includes('No loads this week'), 'Should show empty state after deletion')

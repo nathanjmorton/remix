@@ -5,9 +5,10 @@ import { Database } from 'remix/data-table'
 import { getContext } from 'remix/async-context-middleware'
 import { redirect } from 'remix/response/redirect'
 
-import { loads } from '../../data/schema.ts'
+import { loads, weeks } from '../../data/schema.ts'
 import { routes } from '../../routes.ts'
 import { parseId } from '../../utils/ids.ts'
+import { toWeekId } from '../../utils/weeks.ts'
 import { render } from '../../utils/render.tsx'
 import { LoadFormPage } from './form.tsx'
 import { LoadNotFoundPage, LoadShowPage } from './show-page.tsx'
@@ -166,23 +167,25 @@ export default {
       return render(<LoadShowPage load={load} />)
     },
 
-    new() {
+    async new({ get }) {
+      let db = get(Database)
       let context = getContext()
       let url = new URL(context.request.url)
       let weekIdStr = url.searchParams.get('weekId')
-      let weekId = weekIdStr ? parseInt(weekIdStr, 10) : null
+      let weekDbId = weekIdStr ? parseInt(weekIdStr, 10) : null
+      let week = weekDbId != null && !isNaN(weekDbId) ? await db.find(weeks, weekDbId) : null
       return render(
         <LoadFormPage
           title="New Load"
           action={routes.loads.create.href()}
           cancelHref={
-            weekId != null
-              ? routes.weeks.show.href({ weekId })
+            week != null
+              ? routes.weeks.show.href({ weekId: toWeekId(week.start_date) })
               : routes.weeks.index.href()
           }
           submitLabel="Create Load"
           simplified={true}
-          weekId={weekId}
+          weekId={week?.id ?? null}
         />,
       )
     },
@@ -193,9 +196,12 @@ export default {
       let fields = s.parse(createLoadSchema, formData)
       let values = buildCreateValues(fields)
       await db.create(loads, values)
-      let weekId = values.week_id
-      if (weekId != null) {
-        return redirect(routes.weeks.show.href({ weekId }))
+      let weekDbId = values.week_id
+      if (weekDbId != null) {
+        let week = await db.find(weeks, weekDbId)
+        if (week) {
+          return redirect(routes.weeks.show.href({ weekId: toWeekId(week.start_date) }))
+        }
       }
       return redirect(routes.weeks.index.href())
     },
@@ -247,7 +253,10 @@ export default {
       }
 
       if (weekId != null) {
-        return redirect(routes.weeks.show.href({ weekId }))
+        let week = await db.find(weeks, weekId)
+        if (week) {
+          return redirect(routes.weeks.show.href({ weekId: toWeekId(week.start_date) }))
+        }
       }
       return redirect(routes.weeks.index.href())
     },

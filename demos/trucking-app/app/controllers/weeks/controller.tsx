@@ -6,8 +6,8 @@ import { redirect } from 'remix/response/redirect'
 
 import { loads, weeks } from '../../data/schema.ts'
 import { routes } from '../../routes.ts'
-import { parseId } from '../../utils/ids.ts'
 import { render } from '../../utils/render.tsx'
+import { fromWeekId, toWeekId } from '../../utils/weeks.ts'
 import { NewWeekPage } from './new-page.tsx'
 import { WeekPage } from './week-page.tsx'
 
@@ -34,7 +34,7 @@ export default {
       let allWeeks = await db.findMany(weeks, { orderBy: ['start_date', 'asc'] })
       if (allWeeks.length > 0) {
         let latest = allWeeks[allWeeks.length - 1]!
-        return redirect(routes.weeks.show.href({ weekId: latest.id }))
+        return redirect(routes.weeks.show.href({ weekId: toWeekId(latest.start_date) }))
       }
       return render(
         <NewWeekPage />,
@@ -62,13 +62,13 @@ export default {
       }
 
       let week = await db.create(weeks, { start_date: startDate }, { returnRow: true })
-      return redirect(routes.weeks.show.href({ weekId: week.id }))
+      return redirect(routes.weeks.show.href({ weekId: toWeekId(week.start_date) }))
     },
 
     async show({ get, params }) {
       let db = get(Database)
-      let weekId = parseId(params.weekId)
-      let week = weekId !== undefined ? await db.find(weeks, weekId) : undefined
+      let startDate = fromWeekId(params.weekId)
+      let week = startDate ? await db.findOne(weeks, { where: { start_date: startDate } }) : undefined
 
       if (!week) {
         return new Response('Week not found', { status: 404 })
@@ -82,18 +82,21 @@ export default {
     },
 
     edit({ params }) {
-      return redirect(routes.weeks.show.href({ weekId: parseInt(params.weekId, 10) }))
+      return redirect(routes.weeks.show.href({ weekId: params.weekId }))
     },
 
     update({ params }) {
-      return redirect(routes.weeks.show.href({ weekId: parseInt(params.weekId, 10) }))
+      return redirect(routes.weeks.show.href({ weekId: params.weekId }))
     },
 
     async destroy({ get, params }) {
       let db = get(Database)
-      let weekId = parseId(params.weekId)
-      if (weekId !== undefined) {
-        await db.delete(weeks, weekId)
+      let startDate = fromWeekId(params.weekId)
+      if (startDate) {
+        let week = await db.findOne(weeks, { where: { start_date: startDate } })
+        if (week) {
+          await db.delete(weeks, week.id)
+        }
       }
       return redirect(routes.weeks.index.href())
     },

@@ -2,6 +2,7 @@ import type { Load, Week } from '../../data/schema.ts'
 import { routes } from '../../routes.ts'
 import { Layout } from '../../ui/layout.tsx'
 import { RestfulForm } from '../../ui/restful-form.tsx'
+import { toWeekId } from '../../utils/weeks.ts'
 
 export interface WeekPageProps {
   weeks: Week[]
@@ -49,19 +50,22 @@ export function WeekPage() {
 
     return (
       <Layout title={weekLabel(currentWeek.start_date)}>
-        <div class="week-tabs">
-          {weeks.map((week) => (
-            <a
-              key={week.id}
-              href={routes.weeks.show.href({ weekId: week.id })}
-              class={`week-tab${week.id === currentWeek.id ? ' active' : ''}`}
-            >
-              {weekLabel(week.start_date)}
-            </a>
-          ))}
-          <a href={routes.weeks.new.href()} class="week-tab week-tab-new">
+        <div class="week-nav">
+          <select id="week-select" class="week-select">
+            {weeks.map((week) => (
+              <option
+                key={week.id}
+                value={routes.weeks.show.href({ weekId: toWeekId(week.start_date) })}
+                selected={week.id === currentWeek.id}
+              >
+                {weekLabel(week.start_date)}
+              </option>
+            ))}
+          </select>
+          <a href={routes.weeks.new.href()} class="btn btn-secondary btn-sm">
             + New Week
           </a>
+          <script innerHTML="document.getElementById('week-select').addEventListener('change',function(){window.location.href=this.value})" />
         </div>
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin:1.25rem 0 1rem;">
