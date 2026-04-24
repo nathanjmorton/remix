@@ -192,6 +192,28 @@ importers:
         specifier: 'catalog:'
         version: 4.21.0
 
+  demos/trucking-app:
+    dependencies:
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.8.0
+      remix:
+        specifier: workspace:*
+        version: link:../../packages/remix
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.10.4
+      '@typescript/native-preview':
+        specifier: 'catalog:'
+        version: 7.0.0-dev.20251125.1
+      tsx:
+        specifier: 'catalog:'
+        version: 4.21.0
+
   demos/unpkg:
     dependencies:
       remix:
