@@ -53,20 +53,17 @@ test('POST /weeks with a Monday date creates the week and redirects', async () =
   assert.ok(location?.startsWith('/weeks/'), `Expected /weeks/:id, got ${location}`)
 })
 
-test('GET /weeks now redirects to the newly created week', async () => {
+test('GET /weeks renders the first week directly (no redirect)', async () => {
   let res = await router.fetch(get('/weeks'))
-  assert.equal(res.status, 302)
-  assert.ok(
-    res.headers.get('location')?.startsWith('/weeks/'),
-    'Should redirect to a specific week',
-  )
+  assert.equal(res.status, 200)
+  let html = await res.text()
+  assert.ok(html.includes('Apr 27'), 'Should render the first week label')
+  assert.ok(html.includes('week-select'), 'Should render week dropdown')
+  assert.ok(html.includes('New Load'), 'Should show New Load button')
 })
 
-test('GET /weeks/:id renders the week view with week dropdown and load table', async () => {
-  let redirect = await router.fetch(get('/weeks'))
-  let weekHref = redirect.headers.get('location')!
-
-  let res = await router.fetch(get(weekHref))
+test('GET /weeks/:weekId renders the week view with week dropdown and load table', async () => {
+  let res = await router.fetch(get('/weeks/20260427'))
   assert.equal(res.status, 200)
   let html = await res.text()
   assert.ok(html.includes('week-select'), 'Should render week dropdown')

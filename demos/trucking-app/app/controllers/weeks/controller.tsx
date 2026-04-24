@@ -32,13 +32,17 @@ export default {
     async index({ get }) {
       let db = get(Database)
       let allWeeks = await db.findMany(weeks, { orderBy: ['start_date', 'asc'] })
-      if (allWeeks.length > 0) {
-        let latest = allWeeks[allWeeks.length - 1]!
-        return redirect(routes.weeks.show.href({ weekId: toWeekId(latest.start_date) }))
+      if (allWeeks.length === 0) {
+        return render(<NewWeekPage />)
       }
-      return render(
-        <NewWeekPage />,
-      )
+      // Render the first (earliest) week directly so the URL stays at /weeks.
+      // Redirecting here causes the address bar to lag behind the redirect
+      // target during Remix's client-side navigation (the runtime fetches the
+      // redirect transparently but doesn't update the navigated URL).
+      let firstWeek = allWeeks[0]!
+      let allLoads = await db.findMany(loads, { orderBy: ['date', 'asc'] })
+      let weekLoads = allLoads.filter((l) => l.week_id === firstWeek.id)
+      return render(<WeekPage weeks={allWeeks} currentWeek={firstWeek} loads={weekLoads} />)
     },
 
     new() {
@@ -56,9 +60,7 @@ export default {
       }
 
       if (!isMonday(startDate)) {
-        return render(
-          <NewWeekPage error="Start date must be a Monday." startDate={startDate} />,
-        )
+        return render(<NewWeekPage error="Start date must be a Monday." startDate={startDate} />)
       }
 
       let week = await db.create(weeks, { start_date: startDate }, { returnRow: true })
@@ -68,7 +70,9 @@ export default {
     async show({ get, params }) {
       let db = get(Database)
       let startDate = fromWeekId(params.weekId)
-      let week = startDate ? await db.findOne(weeks, { where: { start_date: startDate } }) : undefined
+      let week = startDate
+        ? await db.findOne(weeks, { where: { start_date: startDate } })
+        : undefined
 
       if (!week) {
         return new Response('Week not found', { status: 404 })

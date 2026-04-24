@@ -3,6 +3,7 @@ import { routes } from '../../routes.ts'
 import { Layout } from '../../ui/layout.tsx'
 import { RestfulForm } from '../../ui/restful-form.tsx'
 import { toWeekId } from '../../utils/weeks.ts'
+import { WeekSelect } from '../../assets/week-select.tsx'
 
 export interface WeekPageProps {
   weeks: Week[]
@@ -51,29 +52,21 @@ export function WeekPage() {
     return (
       <Layout title={weekLabel(currentWeek.start_date)}>
         <div class="week-nav">
-          <select id="week-select" class="week-select">
-            {weeks.map((week) => (
-              <option
-                key={week.id}
-                value={routes.weeks.show.href({ weekId: toWeekId(week.start_date) })}
-                selected={week.id === currentWeek.id}
-              >
-                {weekLabel(week.start_date)}
-              </option>
-            ))}
-          </select>
+          <WeekSelect
+            options={weeks.map((week) => ({
+              value: routes.weeks.show.href({ weekId: toWeekId(week.start_date) }),
+              label: weekLabel(week.start_date),
+              selected: week.id === currentWeek.id,
+            }))}
+          />
           <a href={routes.weeks.new.href()} class="btn btn-secondary btn-sm">
             + New Week
           </a>
-          <script innerHTML="document.getElementById('week-select').addEventListener('change',function(){window.location.href=this.value})" />
         </div>
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin:1.25rem 0 1rem;">
           <h2>{weekLabel(currentWeek.start_date)}</h2>
-          <a
-            href={`${routes.loads.new.href()}?weekId=${currentWeek.id}`}
-            class="btn"
-          >
+          <a href={`${routes.loads.new.href()}?weekId=${currentWeek.id}`} class="btn">
             + New Load
           </a>
         </div>
@@ -129,15 +122,9 @@ export function WeekPage() {
               ))}
               {loads.length === 0 && (
                 <tr>
-                  <td
-                    colspan={9}
-                    style="text-align:center; color:#888; padding:2rem;"
-                  >
+                  <td colspan={9} style="text-align:center; color:#888; padding:2rem;">
                     No loads this week.{' '}
-                    <a href={`${routes.loads.new.href()}?weekId=${currentWeek.id}`}>
-                      Add one
-                    </a>
-                    .
+                    <a href={`${routes.loads.new.href()}?weekId=${currentWeek.id}`}>Add one</a>.
                   </td>
                 </tr>
               )}
@@ -145,10 +132,7 @@ export function WeekPage() {
             {loads.length > 0 && (
               <tfoot>
                 <tr>
-                  <td
-                    colspan={4}
-                    style="text-align:right; font-weight:600; padding-right:0.75rem;"
-                  >
+                  <td colspan={4} style="text-align:right; font-weight:600; padding-right:0.75rem;">
                     Totals
                   </td>
                   <td style="font-weight:600;">{fmt(totalMiles, 0)}</td>
