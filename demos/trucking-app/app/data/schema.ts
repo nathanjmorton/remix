@@ -40,3 +40,76 @@ export const loads = table({
 })
 
 export type Load = TableRow<typeof loads>
+
+export const statements = table({
+  name: 'statements',
+  columns: {
+    id: c.integer(),
+    statement_date: c.text(),
+    check_amount: c.decimal(10, 2),
+  },
+})
+
+export type Statement = TableRow<typeof statements>
+
+export const statementTrips = table({
+  name: 'statement_trips',
+  columns: {
+    id: c.integer(),
+    statement_id: c.integer(),
+    trip_no: c.integer(),
+    description: c.text(),
+    mileage: c.integer(),
+    freight_amount: c.decimal(10, 2),
+    date: c.text(),
+    amount: c.decimal(10, 2),
+  },
+})
+
+export type StatementTrip = TableRow<typeof statementTrips>
+
+export const statementDeductions = table({
+  name: 'statement_deductions',
+  columns: {
+    id: c.integer(),
+    statement_id: c.integer(),
+    description: c.text(),
+    date: c.text(),
+    amount: c.decimal(10, 2),
+  },
+})
+
+export type StatementDeduction = TableRow<typeof statementDeductions>
+
+export const statementFuel = table({
+  name: 'statement_fuel',
+  columns: {
+    id: c.integer(),
+    statement_id: c.integer(),
+    city: c.text(),
+    state: c.text(),
+    gallons: c.decimal(10, 4),
+    fuel_usd: c.decimal(10, 2),
+    advance_usd: c.decimal(10, 2),
+    misc_usd: c.decimal(10, 2),
+    date: c.text(),
+    amount: c.decimal(10, 2),
+  },
+})
+
+export type StatementFuel = TableRow<typeof statementFuel>
+
+export const deductionCatalog = table({
+  name: 'deduction_catalog',
+  columns: {
+    id: c.integer(),
+    name: c.text(),
+    match_key: c.text(),
+    frequency: c.text(),
+    amount_per_period: c.decimal(10, 2).nullable(),
+    total_obligation: c.decimal(10, 2).nullable(),
+    notes: c.text().nullable(),
+  },
+})
+
+export type DeductionCatalog = TableRow<typeof deductionCatalog>

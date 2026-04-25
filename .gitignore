@@ -13,5 +13,6 @@ reference/
 *.cpuprofile
 
 .env
+.DS_Store
 
 /reference
