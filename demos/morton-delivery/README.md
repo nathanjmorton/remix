@@ -20,6 +20,47 @@ pnpm -C demos/morton-delivery dev
 
 Then open [http://localhost:44100](http://localhost:44100).
 
+## Build a static site
+
+The demo can be prerendered to plain HTML for static hosting:
+
+```sh
+pnpm -C demos/morton-delivery build
+```
+
+This writes `index.html`, `services/index.html`, `contact/index.html`, and the
+`favicon.svg` to `dist/`. The build runs the same router used by the dev server,
+so pages stay byte-for-byte identical between dev and production.
+
+Preview the static output locally with any static server, e.g.:
+
+```sh
+npx serve demos/morton-delivery/dist
+```
+
+## Deploy to Vercel
+
+The project is configured for static deployment on Vercel via `vercel.json`.
+
+1. In the Vercel dashboard, import this repository as a new project.
+2. Set **Root Directory** to `demos/morton-delivery`.
+3. Enable **Include source files outside of the Root Directory in the Build
+   Step** so Vercel can resolve the workspace `remix` dependency from the
+   monorepo root.
+4. Leave **Framework Preset** as `Other` — `vercel.json` already declares the
+   build command (`pnpm build`), install command (`pnpm install --frozen-lockfile`),
+   and output directory (`dist`).
+5. Deploy.
+
+Alternatively, from a local checkout:
+
+```sh
+npx vercel --cwd demos/morton-delivery
+```
+
+Follow the prompts to link or create the Vercel project. Subsequent deploys
+use `npx vercel --cwd demos/morton-delivery --prod`.
+
 ## Layout
 
 ```
