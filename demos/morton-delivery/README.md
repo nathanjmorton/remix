@@ -52,14 +52,31 @@ The project is configured for static deployment on Vercel via `vercel.json`.
    and output directory (`dist`).
 5. Deploy.
 
-Alternatively, from a local checkout:
+Alternatively, from a local checkout, deploy from the **monorepo root** so
+Vercel includes `pnpm-workspace.yaml` and `pnpm-lock.yaml` in the build:
 
 ```sh
-npx vercel --cwd demos/morton-delivery
+# From the monorepo root, NOT from demos/morton-delivery
+cd /path/to/remix
+npx vercel
 ```
 
-Follow the prompts to link or create the Vercel project. Subsequent deploys
-use `npx vercel --cwd demos/morton-delivery --prod`.
+When prompted:
+
+- **Set up and deploy?** yes
+- **Link to existing project?** yes (if one exists) or no to create a new one
+- **What's your project's name?** `morton-delivery`
+- **In which directory is your code located?** `demos/morton-delivery`
+
+That last answer sets the project's *Root Directory* to the demo while still
+shipping the workspace lockfile, which is required to resolve
+`remix: workspace:*`. Subsequent deploys: `npx vercel --prod` from the same
+monorepo root.
+
+> Do **not** run `vercel` from inside `demos/morton-delivery`. The CLI will
+> only upload that subdirectory and the install step will fail with
+> `Headless installation requires a pnpm-lock.yaml file` because the lockfile
+> lives at the monorepo root.
 
 ## Layout
 
